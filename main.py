@@ -508,12 +508,14 @@ class ReadabilityDegradationTester:
         print(f"\nCloze Score Trend:")
         print(f"  Starting: {cloze_scores[0]:6.2f}")
         print(f"  Ending:   {cloze_scores[-1]:6.2f}")
-        print(f"  Change:   {cloze_scores[-1] - cloze_scores[0]:+6.2f}")
+        change = cloze_scores[-1] - cloze_scores[0]
+        print(f"  Change:   {change:+6.2f} {'(simpler text)' if change > 0 else '(more complex text)'}")
         
         print(f"\nVocabulary Diversity Trend:")
         print(f"  Starting: {vocab_diversity[0]:6.3f}")
         print(f"  Ending:   {vocab_diversity[-1]:6.3f}")
-        print(f"  Change:   {vocab_diversity[-1] - vocab_diversity[0]:+6.3f}")
+        vocab_change = vocab_diversity[-1] - vocab_diversity[0]
+        print(f"  Change:   {vocab_change:+6.3f} {'(more repetitive)' if vocab_change < 0 else '(more diverse)'}")
         
         # Look for degradation points
         degradation_points = []
@@ -521,19 +523,42 @@ class ReadabilityDegradationTester:
         for i in range(1, len(self.results)):
             prev_score = cloze_scores[i-1]
             curr_score = cloze_scores[i]
+            prev_vocab = vocab_diversity[i-1]
+            curr_vocab = vocab_diversity[i]
+            prev_variance = sentence_variance[i-1]
+            curr_variance = sentence_variance[i]
             
-            # Significant drop in cloze score
-            if prev_score - curr_score > 3.0:
+            # Significant RISE in cloze score = simplification = degradation
+            if curr_score - prev_score > 3.0:
                 degradation_points.append({
                     'context_length': self.results[i]['context_length'],
                     'metric': 'cloze_score',
-                    'drop': prev_score - curr_score
+                    'change': curr_score - prev_score,
+                    'direction': 'rose'
+                })
+            
+            # Significant DROP in vocabulary diversity = degradation
+            if prev_vocab - curr_vocab > 0.05:
+                degradation_points.append({
+                    'context_length': self.results[i]['context_length'],
+                    'metric': 'vocabulary_diversity',
+                    'change': prev_vocab - curr_vocab,
+                    'direction': 'dropped'
+                })
+            
+            # Significant DROP in sentence variance = degradation
+            if prev_variance - curr_variance > 5.0:
+                degradation_points.append({
+                    'context_length': self.results[i]['context_length'],
+                    'metric': 'sentence_variance',
+                    'change': prev_variance - curr_variance,
+                    'direction': 'dropped'
                 })
         
         if degradation_points:
             print(f"\n⚠️  DEGRADATION DETECTED:")
             for point in degradation_points:
-                print(f"  At {point['context_length']:,} tokens: {point['metric']} dropped {point['drop']:.2f}")
+                print(f"  At {point['context_length']:,} tokens: {point['metric']} {point['direction']} {point['change']:.3f}")
         else:
             print(f"\n✅ No significant degradation detected in tested range")
         
