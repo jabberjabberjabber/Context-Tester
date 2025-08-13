@@ -191,20 +191,32 @@ class StreamingAPIClient:
     
     def count_tokens(self, text: str) -> int:
         """ Count tokens using the API """
+        if not text or not text.strip():
+            return 0
+            
         try:
             base_url = self.api_url.replace('/v1/chat/completions', '')
             response = requests.post(
                 f"{base_url}/api/extra/tokencount",
                 json={"prompt": text},
-                headers={"Content-Type": "application/json"}
+                headers={"Content-Type": "application/json"},
+                timeout=10
             )
             if response.status_code == 200:
-                return int(response.json().get("value", 0))
-            else:
-                # Fallback estimation
-                return len(text.split()) * 1.3  # Rough token estimation
-        except Exception:
-            return len(text.split()) * 1.3
+                token_count = int(response.json().get("value", 0))
+                if token_count > 0:
+                    return token_count
+        except Exception as e:
+            print(f"Token counting API failed: {e}")
+        
+        # Robust fallback estimation
+        words = text.split()
+        if not words:
+            return 0
+        # More accurate token estimation: ~1.33 tokens per word for English
+        estimated = int(len(words) * 1.33)
+        print(f"Using estimated token count: {estimated:,} (from {len(words):,} words)")
+        return estimated
     
     def generate_continuation(self, context: str, max_tokens: int = 1024,
                             temperature: float = 0.7) -> str:
@@ -220,7 +232,7 @@ class StreamingAPIClient:
             "max_tokens": max_tokens,
             "temperature": temperature,
             "top_p": 0.95,
-            "repetition_penalty": 1,
+            "repetition_penalty": 1.05,
             "stream": True
         }
         
@@ -292,9 +304,26 @@ class ReadabilityDegradationTester:
             content, metadata = extractor.extract_file_to_string(file_path)
             print(f"Loaded reference text: {metadata.get('resourceName', file_path)}")
             print(f"Content type: {metadata.get('Content-Type', 'Unknown')}")
+            
+            # Debug text loading
+            if not content or not content.strip():
+                raise ValueError(f"File {file_path} appears to be empty or could not be read")
+            
+            print(f"Text preview (first 200 chars): {content[:200]!r}")
+            print(f"Total characters: {len(content):,}")
+            
             return content
         except Exception as e:
             print(f"Error loading file: {e}")
+            # Try simple file reading as fallback
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if content.strip():
+                        print(f"Fallback: Successfully loaded {len(content):,} characters")
+                        return content
+            except Exception as e2:
+                print(f"Fallback reading also failed: {e2}")
             raise
     
     def generate_context_lengths(self, text: str, max_context: Optional[int] = None) -> List[int]:
@@ -307,19 +336,31 @@ class ReadabilityDegradationTester:
         Returns:
             List of context lengths in tokens
         """
+        if not text or not text.strip():
+            print("ERROR: Empty text provided to generate_context_lengths")
+            return []
+            
         text_tokens = self.client.count_tokens(text)
+        print(f"Reference text token count: {text_tokens:,}")
+        
+        if text_tokens == 0:
+            print("ERROR: Could not count tokens in reference text")
+            return []
         
         if max_context is None:
             # Try to detect model's max context
             try:
                 base_url = self.client.api_url.replace('/v1/chat/completions', '')
-                response = requests.get(f"{base_url}/api/extra/true_max_context_length")
+                response = requests.get(f"{base_url}/api/extra/true_max_context_length", timeout=10)
                 if response.status_code == 200:
                     max_context = int(response.json().get("value", 32768))
+                    print(f"Detected model max context: {max_context:,}")
                 else:
                     max_context = 32768
-            except:
+                    print(f"Could not detect max context, using default: {max_context:,}")
+            except Exception as e:
                 max_context = 32768
+                print(f"Error detecting max context ({e}), using default: {max_context:,}")
         
         # Generate powers of 2: 1k, 2k, 4k, 8k, 16k, 32k, etc.
         context_lengths = []
@@ -332,9 +373,15 @@ class ReadabilityDegradationTester:
             context_lengths.append(length)
             power += 1
         
-        print(f"Text has {text_tokens} tokens")
-        print(f"Model max context: {max_context} tokens")
-        print(f"Testing context lengths: {context_lengths}")
+        # Ensure we have at least one test case
+        if not context_lengths and text_tokens > 0:
+            # Add smaller lengths if text is very short
+            for test_length in [512, 256, 128]:
+                if test_length <= text_tokens:
+                    context_lengths = [test_length]
+                    break
+        
+        print(f"Generated context lengths: {context_lengths}")
         
         return context_lengths
     
