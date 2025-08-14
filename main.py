@@ -232,8 +232,8 @@ class StreamingAPIClient:
             "max_tokens": max_tokens,
             "temperature": 0.5,
             "top_p": 0.95,
-            "repetition_penalty": 1,
-            "top_k": 2,
+            "repetition_penalty": 1.05,
+            "top_k": 20,
             "stream": True
         }
         
