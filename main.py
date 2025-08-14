@@ -230,10 +230,10 @@ class StreamingAPIClient:
                 {"role": "user", "content": f"{context}\n\n{instruction}"}
             ],
             "max_tokens": max_tokens,
-            "temperature": 0,
-            "top_p": 1,
+            "temperature": 0.5,
+            "top_p": 0.95,
             "repetition_penalty": 1,
-            "top_k": 1,
+            "top_k": 2,
             "stream": True
         }
         
