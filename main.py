@@ -230,9 +230,10 @@ class StreamingAPIClient:
                 {"role": "user", "content": f"{context}\n\n{instruction}"}
             ],
             "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": 0.95,
-            "repetition_penalty": 1.05,
+            "temperature": 0,
+            "top_p": 1,
+            "repetition_penalty": 1,
+            "top_k": 1,
             "stream": True
         }
         
@@ -389,6 +390,7 @@ class ReadabilityDegradationTester:
         """ Truncate text to approximately target token count """
         words = text.split()
         # Rough estimation: 1.3 words per token
+        target_tokens = int(target_tokens * 0.95)
         target_words = int(target_tokens / 1.3)
         
         if target_words >= len(words):
