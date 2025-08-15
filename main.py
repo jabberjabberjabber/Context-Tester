@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
-Model Readability Degradation Test
+Model Readability Degradation Test - Multi-Round Version
 
 Tests LLM output quality degradation at increasing context lengths by analyzing
 the readability complexity of generated text continuations using Cloze scores.
+Now supports multiple test rounds per context length with statistical averaging.
 
 Based on observations that models exhibit "flattening" patterns around 8k+ context,
 where sentence structure becomes repetitive and vocabulary diversity drops.
@@ -16,6 +17,8 @@ import re
 import warnings
 import csv
 import statistics
+import unicodedata
+
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Literal, TypeAlias
@@ -286,17 +289,45 @@ class ReadabilityDegradationTester:
     """ Tests model degradation across increasing context lengths """
     
     def __init__(self, api_url: str, api_password: Optional[str] = None,
-                 word_list_path: str = "easy_words.txt"):
+                 word_list_path: str = "easy_words.txt", num_rounds: int = 1):
         """ Initialize the degradation tester
         
         Args:
             api_url: URL to the LLM API
             api_password: Optional API key
             word_list_path: Path to Dale-Chall word list
+            num_rounds: Number of test rounds per context length
         """
         self.client = StreamingAPIClient(api_url, api_password)
         initialize_word_list(word_list_path)
+        self.num_rounds = max(1, num_rounds)
         self.results = []
+        self.detailed_results = []  # Store individual round results
+    
+    def normalize_content(self, content: str) -> str:
+        """ Convert fixed-width text and normalize characters """
+        content = unicodedata.normalize('NFKC', content)
+        content = content.replace('--', '—')
+        paragraphs = content.split('\n\n')
+        reformatted_paragraphs = []
+        
+        for paragraph in paragraphs:
+            # Skip empty paragraphs
+            if not paragraph.strip():
+                continue
+                
+            # Join lines within paragraph, collapsing artificial line breaks
+            lines = paragraph.strip().split('\n')
+            joined = ' '.join(line.strip() for line in lines if line.strip())
+            
+            # Clean up multiple spaces
+            cleaned = ' '.join(joined.split())
+            
+            if cleaned:
+                reformatted_paragraphs.append(cleaned)
+        
+        # Rejoin with double newlines to preserve paragraph structure
+        return '\n\n'.join(reformatted_paragraphs)
         
     def load_reference_text(self, file_path: str) -> str:
         """ Load reference text from file """
@@ -310,10 +341,11 @@ class ReadabilityDegradationTester:
             if not content or not content.strip():
                 raise ValueError(f"File {file_path} appears to be empty or could not be read")
             
-            print(f"Text preview (first 200 chars): {content[:200]!r}")
-            print(f"Total characters: {len(content):,}")
+            normalized_content = self.normalize_content(content)
+            print(f"Text preview (first 200 chars): {normalized_content[:200]!r}")
+            print(f"Total characters: {len(normalized_content):,}")
             
-            return content
+            return normalized_content
         except Exception as e:
             print(f"Error loading file: {e}")
             # Try simple file reading as fallback
@@ -321,8 +353,9 @@ class ReadabilityDegradationTester:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
                     if content.strip():
-                        print(f"Fallback: Successfully loaded {len(content):,} characters")
-                        return content
+                        normalized_content = self.normalize_content(content)
+                        print(f"Fallback: Successfully loaded {len(normalized_content):,} characters")
+                        return normalized_content
             except Exception as e2:
                 print(f"Fallback reading also failed: {e2}")
             raise
@@ -409,6 +442,48 @@ class ReadabilityDegradationTester:
         
         return truncated
     
+    def average_results(self, round_results: List[Dict]) -> Dict[str, Any]:
+        """ Average results across multiple rounds """
+        if not round_results:
+            return {}
+        
+        if len(round_results) == 1:
+            return round_results[0]
+        
+        # Numerical fields to average
+        numerical_fields = [
+            'pct_unfamiliar_words', 'avg_sentence_length', 'cloze_score',
+            'word_count', 'sentence_count', 'sentence_length_variance',
+            'vocabulary_diversity', 'continuation_length'
+        ]
+        
+        averaged = {}
+        
+        # Copy non-numerical fields from first result
+        for key, value in round_results[0].items():
+            if key not in numerical_fields:
+                averaged[key] = value
+        
+        # Average numerical fields
+        for field in numerical_fields:
+            values = [result[field] for result in round_results if field in result]
+            if values:
+                averaged[field] = round(statistics.mean(values), 4)
+        
+        # Recalculate reading level from averaged cloze score
+        if 'cloze_score' in averaged:
+            averaged['reading_level'] = reading_level_from_cloze(averaged['cloze_score'])
+        
+        # Add round statistics
+        averaged['num_rounds'] = len(round_results)
+        averaged['cloze_score_std'] = round(statistics.stdev([r['cloze_score'] for r in round_results]), 3) if len(round_results) > 1 else 0.0
+        averaged['vocab_diversity_std'] = round(statistics.stdev([r['vocabulary_diversity'] for r in round_results]), 4) if len(round_results) > 1 else 0.0
+        
+        # Update timestamp to when averaging was done
+        averaged['timestamp'] = datetime.now().isoformat()
+        
+        return averaged
+    
     def run_test(self, file_path: str, max_context: Optional[int] = None,
                  output_file: Optional[str] = None) -> List[Dict]:
         """ Run the complete degradation test
@@ -419,10 +494,12 @@ class ReadabilityDegradationTester:
             output_file: Optional CSV output file
             
         Returns:
-            List of test results
+            List of averaged test results
         """
         print("=" * 60)
         print("MODEL READABILITY DEGRADATION TEST")
+        if self.num_rounds > 1:
+            print(f"Running {self.num_rounds} rounds per context length")
         print("=" * 60)
         
         # Load reference text
@@ -443,46 +520,76 @@ class ReadabilityDegradationTester:
         print(f"{'='*60}")
         
         self.results = []
+        self.detailed_results = []
         
         for i, context_length in enumerate(context_lengths, 1):
             print(f"\n[TEST {i}/{len(context_lengths)}] Context Length: {context_length:,} tokens")
+            if self.num_rounds > 1:
+                print(f"Running {self.num_rounds} rounds...")
             print("-" * 50)
             
-            # Prepare context
+            # Prepare context (same for all rounds)
             context = self.truncate_to_tokens(reference_text, context_length)
             actual_tokens = self.client.count_tokens(context)
             
             print(f"Actual context tokens: {actual_tokens:,}")
-            print(f"Generating continuation...")
             
-            # Generate continuation
-            continuation = self.client.generate_continuation(context, max_tokens=1024)
+            # Run multiple rounds
+            round_results = []
             
-            if not continuation:
-                print(f"WARNING: No continuation generated for context length {context_length}")
+            for round_num in range(self.num_rounds):
+                if self.num_rounds > 1:
+                    print(f"\n  Round {round_num + 1}/{self.num_rounds}:")
+                else:
+                    print(f"Generating continuation...")
+                
+                # Generate continuation
+                continuation = self.client.generate_continuation(context, max_tokens=1024)
+                
+                if not continuation:
+                    print(f"WARNING: No continuation generated for round {round_num + 1}")
+                    continue
+                
+                # Analyze readability
+                analysis = analyze_text_readability(continuation)
+                
+                # Store detailed result
+                detailed_result = {
+                    'context_length': context_length,
+                    'actual_context_tokens': actual_tokens,
+                    'round_number': round_num + 1,
+                    'continuation_length': len(continuation),
+                    'timestamp': datetime.now().isoformat(),
+                    **analysis
+                }
+                
+                round_results.append(detailed_result)
+                self.detailed_results.append(detailed_result)
+                
+                # Display round results
+                if self.num_rounds > 1:
+                    print(f"    Cloze: {analysis['cloze_score']:6.2f}, "
+                          f"Level: {analysis['reading_level']:>6}, "
+                          f"Vocab: {analysis['vocabulary_diversity']:5.3f}")
+            
+            if not round_results:
+                print(f"WARNING: No successful rounds for context length {context_length}")
                 continue
             
-            # Analyze readability
-            analysis = analyze_text_readability(continuation)
+            # Average results across rounds
+            averaged_result = self.average_results(round_results)
+            self.results.append(averaged_result)
             
-            # Store results
-            result = {
-                'context_length': context_length,
-                'actual_context_tokens': actual_tokens,
-                'continuation_length': len(continuation),
-                'timestamp': datetime.now().isoformat(),
-                **analysis
-            }
-            self.results.append(result)
-            
-            # Display results
-            print(f"\nReadability Analysis:")
-            print(f"  Cloze Score: {analysis['cloze_score']:6.2f}")
-            print(f"  Reading Level: {analysis['reading_level']:>6}")
-            print(f"  Unfamiliar Words: {analysis['pct_unfamiliar_words']*100:5.1f}%")
-            print(f"  Avg Sentence Length: {analysis['avg_sentence_length']:5.1f}")
-            print(f"  Sentence Variance: {analysis['sentence_length_variance']:5.1f}")
-            print(f"  Vocabulary Diversity: {analysis['vocabulary_diversity']:5.3f}")
+            # Display averaged results
+            print(f"\nAveraged Results (n={len(round_results)}):")
+            print(f"  Cloze Score: {averaged_result['cloze_score']:6.2f} "
+                  f"(±{averaged_result['cloze_score_std']:4.2f})")
+            print(f"  Reading Level: {averaged_result['reading_level']:>6}")
+            print(f"  Unfamiliar Words: {averaged_result['pct_unfamiliar_words']*100:5.1f}%")
+            print(f"  Avg Sentence Length: {averaged_result['avg_sentence_length']:5.1f}")
+            print(f"  Sentence Variance: {averaged_result['sentence_length_variance']:5.1f}")
+            print(f"  Vocabulary Diversity: {averaged_result['vocabulary_diversity']:5.3f} "
+                  f"(±{averaged_result['vocab_diversity_std']:5.3f})")
         
         # Analysis and summary
         self._print_summary()
@@ -500,6 +607,8 @@ class ReadabilityDegradationTester:
         
         print(f"\n{'='*60}")
         print("DEGRADATION ANALYSIS")
+        if self.num_rounds > 1:
+            print(f"(Based on averages of {self.num_rounds} rounds each)")
         print(f"{'='*60}")
         
         # Calculate trends
@@ -558,7 +667,7 @@ class ReadabilityDegradationTester:
                 })
         
         if degradation_points:
-            print(f"\n⚠️  DEGRADATION DETECTED:")
+            print(f"\n⚠️ DEGRADATION DETECTED:")
             for point in degradation_points:
                 print(f"  At {point['context_length']:,} tokens: {point['metric']} {point['direction']} {point['change']:.3f}")
         else:
@@ -566,23 +675,39 @@ class ReadabilityDegradationTester:
         
         # Print full results table
         print(f"\nFULL RESULTS:")
-        print(f"{'Context':>8} {'Cloze':>8} {'Level':>8} {'Unfamiliar':>10} {'AvgSent':>8} {'Variance':>8} {'VocabDiv':>8}")
-        print("-" * 68)
-        
-        for result in self.results:
-            print(f"{result['context_length']:>8,} "
-                  f"{result['cloze_score']:>8.2f} "
-                  f"{result['reading_level']:>8} "
-                  f"{result['pct_unfamiliar_words']*100:>9.1f}% "
-                  f"{result['avg_sentence_length']:>8.1f} "
-                  f"{result['sentence_length_variance']:>8.1f} "
-                  f"{result['vocabulary_diversity']:>8.3f}")
+        if self.num_rounds > 1:
+            print(f"{'Context':>8} {'Cloze':>8} {'±Std':>6} {'Level':>8} {'Unfamiliar':>10} {'AvgSent':>8} {'Variance':>8} {'VocabDiv':>8} {'±Std':>6}")
+            print("-" * 80)
+            
+            for result in self.results:
+                print(f"{result['context_length']:>8,} "
+                      f"{result['cloze_score']:>8.2f} "
+                      f"{result['cloze_score_std']:>6.2f} "
+                      f"{result['reading_level']:>8} "
+                      f"{result['pct_unfamiliar_words']*100:>9.1f}% "
+                      f"{result['avg_sentence_length']:>8.1f} "
+                      f"{result['sentence_length_variance']:>8.1f} "
+                      f"{result['vocabulary_diversity']:>8.3f} "
+                      f"{result['vocab_diversity_std']:>6.3f}")
+        else:
+            print(f"{'Context':>8} {'Cloze':>8} {'Level':>8} {'Unfamiliar':>10} {'AvgSent':>8} {'Variance':>8} {'VocabDiv':>8}")
+            print("-" * 68)
+            
+            for result in self.results:
+                print(f"{result['context_length']:>8,} "
+                      f"{result['cloze_score']:>8.2f} "
+                      f"{result['reading_level']:>8} "
+                      f"{result['pct_unfamiliar_words']*100:>9.1f}% "
+                      f"{result['avg_sentence_length']:>8.1f} "
+                      f"{result['sentence_length_variance']:>8.1f} "
+                      f"{result['vocabulary_diversity']:>8.3f}")
     
     def _save_results(self, output_file: str):
         """ Save results to CSV """
         if not self.results:
             return
         
+        # Save averaged results
         fieldnames = self.results[0].keys()
         
         with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
@@ -590,7 +715,19 @@ class ReadabilityDegradationTester:
             writer.writeheader()
             writer.writerows(self.results)
         
-        print(f"\n📊 Results saved to: {output_file}")
+        print(f"\n📊 Averaged results saved to: {output_file}")
+        
+        # Save detailed results if multiple rounds
+        if self.num_rounds > 1 and self.detailed_results:
+            detailed_file = output_file.replace('.csv', '_detailed.csv')
+            detailed_fieldnames = self.detailed_results[0].keys()
+            
+            with open(detailed_file, 'w', newline='', encoding='utf-8') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=detailed_fieldnames)
+                writer.writeheader()
+                writer.writerows(self.detailed_results)
+            
+            print(f"📊 Detailed round-by-round results saved to: {detailed_file}")
 
 
 # ================================
@@ -599,13 +736,14 @@ class ReadabilityDegradationTester:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test LLM readability degradation across context lengths",
+        description="Test LLM readability degradation across context lengths with multi-round averaging",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   python readability_test.py novel.txt --api-url http://localhost:5001
   python readability_test.py document.pdf --max-context 16384 --output results.csv
-  python readability_test.py text.txt --word-list dale_chall_words.txt
+  python readability_test.py text.txt --word-list dale_chall_words.txt --rounds 3
+  python readability_test.py novel.txt --rounds 5 --output degradation_test.csv
         """
     )
     
@@ -640,6 +778,13 @@ Examples:
     )
     
     parser.add_argument(
+        '--rounds',
+        type=int,
+        default=1,
+        help='Number of test rounds per context length (default: 1)'
+    )
+    
+    parser.add_argument(
         '--output',
         default=None,
         help='Output CSV file for detailed results'
@@ -651,7 +796,8 @@ Examples:
         tester = ReadabilityDegradationTester(
             api_url=args.api_url,
             api_password=args.api_password,
-            word_list_path=args.word_list
+            word_list_path=args.word_list,
+            num_rounds=args.rounds
         )
         
         tester.run_test(
