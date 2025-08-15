@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 """
-Performance Comparison Tool
+Multi-Dataset Performance Comparison Tool
 
-Analyzes and visualizes performance differences between ROPE and full context configurations
-(rope and full_context) across different context lengths. Saves plots as PNG files.
+Analyzes and visualizes performance differences between multiple configurations
+across different context lengths. Supports 1-6 CSV input files.
+Saves plots as PNG files.
 
 Usage:
-    python analysis.py <rope_file.csv> <full_context_file.csv>
-    python analysis.py data/rope.csv data/full_context.csv --output results.png
-    python analysis.py data/rope.csv data/full_context.csv --no-plots
+    python analysis.py dataset1.csv dataset2.csv dataset3.csv
+    python analysis.py rope.csv full_context.csv --output comparison.png
+    python analysis.py config1.csv config2.csv config3.csv config4.csv --no-plots
 
 Requirements:
     pip install pandas matplotlib numpy
@@ -18,36 +19,84 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 import argparse
-from matplotlib.patches import Rectangle
+import os
+from pathlib import Path
 
-def load_and_compare_data(rope_file, full_context_file):
-    """ Load and merge the rope and full_context datasets for comparison.
+def get_dataset_name(filepath):
+    """ Extract dataset name from file path (filename without extension).
     
     Args:
-        rope_file: Path to rope CSV file
-        full_context_file: Path to full_context CSV file
+        filepath: Path to CSV file
     
     Returns:
-        Merged dataframe with both rope and full_context metrics
+        Clean dataset name for use in plots and analysis
     """
-    # Load the data
-    rope_data = pd.read_csv(rope_file)
-    full_context_data = pd.read_csv(full_context_file)
-    
-    # Filter out null context lengths and merge on context_length
-    rope_clean = rope_data[rope_data['context_length'].notna()].copy()
-    full_context_clean = full_context_data[full_context_data['context_length'].notna()].copy()
-    
-    # Merge datasets
-    merged = pd.merge(rope_clean, full_context_clean, on='context_length', suffixes=('_rope', '_full_context'))
-    
-    return merged.sort_values('context_length')
+    return Path(filepath).stem
 
-def create_comparison_plots(data, output_file='comparison.png', dpi=300):
-    """ Create comprehensive comparison plots for rope vs full_context.
+def load_and_compare_data(csv_files):
+    """ Load and merge multiple datasets for comparison.
     
     Args:
-        data: Merged dataframe with rope and full_context metrics
+        csv_files: List of paths to CSV files
+    
+    Returns:
+        Tuple of (merged_dataframe, dataset_names)
+    """
+    dataset_names = [get_dataset_name(f) for f in csv_files]
+    datasets = []
+    
+    # Load all datasets
+    for i, csv_file in enumerate(csv_files):
+        try:
+            data = pd.read_csv(csv_file)
+            # Filter out null context lengths
+            data_clean = data[data['context_length'].notna()].copy()
+            datasets.append((data_clean, dataset_names[i]))
+            print(f"Loaded {len(data_clean)} rows from {csv_file}")
+        except Exception as e:
+            print(f"Error loading {csv_file}: {e}")
+            raise
+    
+    if not datasets:
+        raise ValueError("No valid datasets loaded")
+    
+    # Start with the first dataset
+    merged, first_name = datasets[0]
+    merged = merged.copy()
+    
+    # Add suffix to columns (except context_length)
+    columns_to_rename = [col for col in merged.columns if col != 'context_length']
+    for col in columns_to_rename:
+        merged = merged.rename(columns={col: f"{col}_{first_name}"})
+    
+    # Merge additional datasets
+    for data, name in datasets[1:]:
+        data_renamed = data.copy()
+        # Add suffix to columns (except context_length)
+        for col in columns_to_rename:
+            if col in data_renamed.columns:
+                data_renamed = data_renamed.rename(columns={col: f"{col}_{name}"})
+        
+        merged = pd.merge(merged, data_renamed, on='context_length', how='outer')
+    
+    return merged.sort_values('context_length'), dataset_names
+
+def get_plot_colors_and_markers():
+    """ Get distinct colors and markers for up to 6 datasets.
+    
+    Returns:
+        Tuple of (colors, markers) lists
+    """
+    colors = ['#2563eb', '#dc2626', '#16a34a', '#ca8a04', '#9333ea', '#c2410c']
+    markers = ['o', 's', '^', 'D', 'v', '<']
+    return colors, markers
+
+def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300):
+    """ Create comprehensive comparison plots for multiple datasets.
+    
+    Args:
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
         output_file: Path for output PNG file
         dpi: Resolution for output image
     """
@@ -56,31 +105,37 @@ def create_comparison_plots(data, output_file='comparison.png', dpi=300):
     matplotlib.use('Agg')
     
     fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle('ROPE vs Full Conext Performance Comparison', fontsize=16, fontweight='bold')
+    fig.suptitle('Multi-Dataset Performance Comparison', fontsize=16, fontweight='bold')
     
     metrics = [
         ('cloze_score', 'Cloze Score', 'Score'),
         ('pct_unfamiliar_words', 'Unfamiliar Words', 'Percentage'),
         ('vocabulary_diversity', 'Vocabulary Diversity', 'Diversity Score'),
-        ('continuation_length', 'Continuation Length', 'Tokens'),
+        ('continuation_length', 'Continuation Length', 'Characters'),
         ('avg_sentence_length', 'Average Sentence Length', 'Words'),
         ('sentence_length_variance', 'Sentence Length Variance', 'Variance')
     ]
+    
+    colors, markers = get_plot_colors_and_markers()
     
     for i, (metric, title, ylabel) in enumerate(metrics):
         row = i // 3
         col = i % 3
         ax = axes[row, col]
         
-        # Convert percentage if needed
-        rope_values = data[f'{metric}_rope'] * (100 if metric == 'pct_unfamiliar_words' else 1)
-        full_context_values = data[f'{metric}_full_context'] * (100 if metric == 'pct_unfamiliar_words' else 1)
-        
-        # Plot lines
-        ax.plot(data['context_length'], rope_values, 'o-', color='#2563eb', 
-                linewidth=3, markersize=6, label='rope')
-        ax.plot(data['context_length'], full_context_values, 's-', color='#dc2626', 
-                linewidth=3, markersize=6, label='full_context')
+        # Plot each dataset
+        for j, dataset_name in enumerate(dataset_names):
+            column_name = f'{metric}_{dataset_name}'
+            if column_name in data.columns:
+                # Convert percentage if needed
+                values = data[column_name] * (100 if metric == 'pct_unfamiliar_words' else 1)
+                # Filter out NaN values for plotting
+                mask = values.notna() & data['context_length'].notna()
+                if mask.any():
+                    ax.plot(data.loc[mask, 'context_length'], values[mask], 
+                           marker=markers[j % len(markers)], 
+                           color=colors[j % len(colors)],
+                           linewidth=3, markersize=6, label=dataset_name)
         
         # Formatting
         ax.set_xscale('log')
@@ -91,106 +146,150 @@ def create_comparison_plots(data, output_file='comparison.png', dpi=300):
         ax.legend()
         
         # Format x-axis labels
-        ax.set_xticks(data['context_length'])
-        ax.set_xticklabels([f'{int(x/1000)}K' if x >= 1000 else str(int(x)) 
-                           for x in data['context_length']])
+        if len(data['context_length'].dropna()) > 0:
+            unique_contexts = sorted(data['context_length'].dropna().unique())
+            ax.set_xticks(unique_contexts)
+            ax.set_xticklabels([f'{int(x/1000)}K' if x >= 1000 else str(int(x)) 
+                               for x in unique_contexts])
     
     plt.tight_layout()
     plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
     print(f"Plot saved to: {output_file}")
     plt.close()
 
-def analyze_performance_ranges(data):
-    """ Analyze which model performs better at different context ranges.
+def analyze_performance_ranges(data, dataset_names):
+    """ Analyze performance across different context ranges for all datasets.
     
     Args:
-        data: Merged dataframe with rope and full_context metrics
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
     """
     print("=" * 80)
     print("PERFORMANCE ANALYSIS BY CONTEXT LENGTH")
     print("=" * 80)
     
-    for _, row in data.iterrows():
-        ctx = int(row['context_length'])
-        print(f"\nContext Length: {ctx:,}")
+    # Get available context lengths
+    available_contexts = sorted(data['context_length'].dropna().unique())
+    
+    for ctx in available_contexts:
+        ctx_data = data[data['context_length'] == ctx]
+        if len(ctx_data) == 0:
+            continue
+            
+        print(f"\nContext Length: {int(ctx):,}")
         
         # Cloze score comparison
-        cloze_diff = row['cloze_score_full_context'] - row['cloze_score_rope']
-        cloze_winner = "full_context" if cloze_diff > 0 else "rope"
-        print(f"  Cloze Score    - rope: {row['cloze_score_rope']:.2f}, full_context: {row['cloze_score_full_context']:.2f} "
-              f"(Winner: {cloze_winner}, Δ: {cloze_diff:+.2f})")
+        print("  Cloze Scores:")
+        cloze_scores = {}
+        for dataset in dataset_names:
+            col_name = f'cloze_score_{dataset}'
+            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
+                score = ctx_data[col_name].iloc[0]
+                cloze_scores[dataset] = score
+                print(f"    {dataset}: {score:.3f}")
+        
+        if cloze_scores:
+            best_cloze = max(cloze_scores, key=cloze_scores.get)
+            print(f"    Winner: {best_cloze}")
         
         # Unfamiliar words (lower is better)
-        unfam_diff = row['pct_unfamiliar_words_full_context'] - row['pct_unfamiliar_words_rope']
-        unfam_winner = "rope" if unfam_diff > 0 else "full_context"
-        print(f"  Unfamiliar %   - rope: {row['pct_unfamiliar_words_rope']*100:.1f}%, "
-              f"full_context: {row['pct_unfamiliar_words_full_context']*100:.1f}% "
-              f"(Winner: {unfam_winner}, Δ: {unfam_diff*100:+.1f}%)")
+        print("  Unfamiliar Word Percentages:")
+        unfam_scores = {}
+        for dataset in dataset_names:
+            col_name = f'pct_unfamiliar_words_{dataset}'
+            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
+                score = ctx_data[col_name].iloc[0]
+                unfam_scores[dataset] = score
+                print(f"    {dataset}: {score*100:.1f}%")
+        
+        if unfam_scores:
+            best_unfam = min(unfam_scores, key=unfam_scores.get)
+            print(f"    Winner (lowest): {best_unfam}")
         
         # Vocabulary diversity
-        vocab_diff = row['vocabulary_diversity_full_context'] - row['vocabulary_diversity_rope']
-        vocab_winner = "full_context" if vocab_diff > 0 else "rope"
-        print(f"  Vocab Diversity- rope: {row['vocabulary_diversity_rope']:.3f}, "
-              f"full_context: {row['vocabulary_diversity_full_context']:.3f} "
-              f"(Winner: {vocab_winner}, Δ: {vocab_diff:+.3f})")
+        print("  Vocabulary Diversity:")
+        vocab_scores = {}
+        for dataset in dataset_names:
+            col_name = f'vocabulary_diversity_{dataset}'
+            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
+                score = ctx_data[col_name].iloc[0]
+                vocab_scores[dataset] = score
+                print(f"    {dataset}: {score:.3f}")
         
-        # Continuation length
-        cont_diff = row['continuation_length_full_context'] - row['continuation_length_rope']
-        print(f"  Continuation   - rope: {row['continuation_length_rope']}, "
-              f"full_context: {row['continuation_length_full_context']} tokens (Δ: {cont_diff:+})")
+        if vocab_scores:
+            best_vocab = max(vocab_scores, key=vocab_scores.get)
+            print(f"    Winner: {best_vocab}")
 
-def create_summary_analysis(data):
-    """ Create summary statistics and insights.
+def create_summary_analysis(data, dataset_names):
+    """ Create summary statistics and insights for all datasets.
     
     Args:
-        data: Merged dataframe with rope and full_context metrics
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
     """
     print("\n" + "=" * 80)
     print("SUMMARY INSIGHTS")
     print("=" * 80)
     
     # Overall averages
-    rope_avg_cloze = data['cloze_score_rope'].mean()
-    full_context_avg_cloze = data['cloze_score_full_context'].mean()
-    rope_avg_cont = data['continuation_length_rope'].mean()
-    full_context_avg_cont = data['continuation_length_full_context'].mean()
+    print("Overall Performance Averages:")
     
-    print(f"Overall Performance:")
-    print(f"  Average Cloze Score - rope: {rope_avg_cloze:.2f}, full_context: {full_context_avg_cloze:.2f}")
-    print(f"  Average Continuation Length - rope: {rope_avg_cont:.0f}, full_context: {full_context_avg_cont:.0f} tokens")
-    print(f"  full_context generates {((full_context_avg_cont - rope_avg_cont) / rope_avg_cont * 100):+.1f}% longer text")
+    metrics_to_analyze = ['cloze_score', 'vocabulary_diversity', 'pct_unfamiliar_words']
+    
+    for metric in metrics_to_analyze:
+        print(f"\n  {metric.replace('_', ' ').title()}:")
+        metric_values = {}
+        
+        for dataset in dataset_names:
+            col_name = f'{metric}_{dataset}'
+            if col_name in data.columns:
+                avg_val = data[col_name].mean()
+                if not pd.isna(avg_val):
+                    metric_values[dataset] = avg_val
+                    if metric == 'pct_unfamiliar_words':
+                        print(f"    {dataset}: {avg_val*100:.1f}%")
+                    elif metric == 'continuation_length':
+                        print(f"    {dataset}: {avg_val:.0f} chars")
+                        #pass
+                    else:
+                        print(f"    {dataset}: {avg_val:.3f}")
+        
+        # Find best performing dataset for this metric
+        if metric_values:
+            if metric == 'pct_unfamiliar_words':
+                best_dataset = min(metric_values, key=metric_values.get)
+                print(f"    Best (lowest): {best_dataset}")
+            else:
+                best_dataset = max(metric_values, key=metric_values.get)
+                print(f"    Best: {best_dataset}")
     
     # Context-specific advantages
-    print(f"\nContext-Specific Advantages:")
+    print(f"\nPeak Performance by Context Length:")
     
-    # Find where each model wins on cloze score
-    rope_cloze_wins = data[data['cloze_score_rope'] > data['cloze_score_full_context']]['context_length'].tolist()
-    full_context_cloze_wins = data[data['cloze_score_full_context'] > data['cloze_score_rope']]['context_length'].tolist()
+    available_contexts = sorted(data['context_length'].dropna().unique())
     
-    print(f"  rope better cloze scores at: {[f'{int(x/1000)}K' if x >= 1000 else str(int(x)) for x in rope_cloze_wins]}")
-    print(f"  full_context better cloze scores at: {[f'{int(x/1000)}K' if x >= 1000 else str(int(x)) for x in full_context_cloze_wins]}")
-    
-    # Peak performance
-    rope_best_cloze_ctx = data.loc[data['cloze_score_rope'].idxmax(), 'context_length']
-    full_context_best_cloze_ctx = data.loc[data['cloze_score_full_context'].idxmax(), 'context_length']
-    
-    print(f"  rope peak cloze performance at: {int(rope_best_cloze_ctx):,} context")
-    print(f"  full_context peak cloze performance at: {int(full_context_best_cloze_ctx):,} context")
+    for dataset in dataset_names:
+        cloze_col = f'cloze_score_{dataset}'
+        if cloze_col in data.columns and not data[cloze_col].isna().all():
+            best_idx = data[cloze_col].idxmax()
+            if not pd.isna(best_idx):
+                best_ctx = data.loc[best_idx, 'context_length']
+                best_score = data.loc[best_idx, cloze_col]
+                print(f"  {dataset}: {int(best_ctx):,} context (score: {best_score:.3f})")
 
 def parse_arguments():
-    """ Parse command line arguments for CSV file inputs.
+    """ Parse command line arguments for multiple CSV file inputs.
     
     Returns:
-        Parsed arguments containing file paths
+        Parsed arguments containing file paths and options
     """
     parser = argparse.ArgumentParser(
-        description='Compare ROPE and FULL CONTEXT performance across different context lengths'
+        description='Compare performance across multiple datasets and different context lengths',
+        epilog='Supports 1-6 CSV input files. Dataset names are derived from filenames.'
     )
     
-    parser.add_argument('rope_file', 
-                       help='Path to the ROPE CSV file')
-    parser.add_argument('full_context_file', 
-                       help='Path to the FULL CONTEXT CSV file')
+    parser.add_argument('csv_files', nargs='+', 
+                       help='Path(s) to CSV files (1-6 files supported)')
     parser.add_argument('--no-plots', action='store_true',
                        help='Skip generating plots (useful for headless environments)')
     parser.add_argument('--output', '-o', default='comparison.png',
@@ -205,31 +304,46 @@ def main():
     """
     args = parse_arguments()
     
+    # Validate number of input files
+    if len(args.csv_files) > 6:
+        print(f"Error: Too many input files ({len(args.csv_files)}). Maximum supported is 6.")
+        return
+    
+    if len(args.csv_files) < 1:
+        print("Error: At least one CSV file is required.")
+        return
+    
     try:
         # Load and merge data
-        print(f"Loading data from {args.rope_file} and {args.full_context_file}...")
-        data = load_and_compare_data(args.rope_file, args.full_context_file)
-        print(f"Loaded {len(data)} context length comparisons")
+        print(f"Loading data from {len(args.csv_files)} file(s)...")
+        for i, f in enumerate(args.csv_files, 1):
+            print(f"  {i}. {f}")
+        
+        data, dataset_names = load_and_compare_data(args.csv_files)
+        print(f"Successfully merged {len(data)} context length comparisons")
+        print(f"Datasets: {', '.join(dataset_names)}")
         
         # Create visualizations (unless disabled)
         if not args.no_plots:
             print("Creating comparison plots...")
-            create_comparison_plots(data, args.output, args.dpi)
+            create_comparison_plots(data, dataset_names, args.output, args.dpi)
         else:
             print("Skipping plots (--no-plots specified)")
         
         # Detailed analysis
-        analyze_performance_ranges(data)
+        analyze_performance_ranges(data, dataset_names)
         
         # Summary insights
-        create_summary_analysis(data)
+        create_summary_analysis(data, dataset_names)
         
     except FileNotFoundError as e:
-        print(f"Error: Could not find CSV files.")
-        print(f"Make sure '{args.rope_file}' and '{args.full_context_file}' exist and are accessible.")
+        print(f"Error: Could not find one or more CSV files.")
+        print(f"Make sure all specified files exist and are accessible.")
         print(f"Details: {e}")
     except Exception as e:
         print(f"Error processing data: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     main()

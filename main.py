@@ -122,6 +122,10 @@ def _is_unfamiliar(word: str) -> bool:
         return False
     return word not in EASY_WORDS
 
+def is_power_of_two(n: int) -> bool:
+    """Check if n is a power of 2"""
+    return n > 0 and (n & (n - 1)) == 0
+
 def sentence_length_variance(text: str) -> float:
     """ Calculate variance in sentence lengths """
     cleaned_text = text.replace("\n", " ").strip()
@@ -233,11 +237,12 @@ class StreamingAPIClient:
                 {"role": "user", "content": f"{context}\n\n{instruction}"}
             ],
             "max_tokens": max_tokens,
-            "temperature": 0.5,
-            "top_p": 0.95,
-            "repetition_penalty": 1.05,
-            "top_k": 20,
-            "stream": True
+            "temperature": 1,
+            "top_p": 1,
+            "repetition_penalty": 1,
+            "top_k": 100,
+            "stream": True,
+            "min_p": 0.1
         }
         
         result = []
@@ -289,7 +294,7 @@ class ReadabilityDegradationTester:
     """ Tests model degradation across increasing context lengths """
     
     def __init__(self, api_url: str, api_password: Optional[str] = None,
-                 word_list_path: str = "easy_words.txt", num_rounds: int = 1):
+                 word_list_path: str = "easy_words.txt", num_rounds: int = 1, divisions: int = 1):
         """ Initialize the degradation tester
         
         Args:
@@ -297,13 +302,15 @@ class ReadabilityDegradationTester:
             api_password: Optional API key
             word_list_path: Path to Dale-Chall word list
             num_rounds: Number of test rounds per context length
+            divisions: Number of splits per power of 2 tier
         """
         self.client = StreamingAPIClient(api_url, api_password)
         initialize_word_list(word_list_path)
         self.num_rounds = max(1, num_rounds)
         self.results = []
         self.detailed_results = []  # Store individual round results
-    
+        self.divisions = max(1, divisions)
+        
     def normalize_content(self, content: str) -> str:
         """ Convert fixed-width text and normalize characters """
         content = unicodedata.normalize('NFKC', content)
@@ -361,7 +368,7 @@ class ReadabilityDegradationTester:
             raise
     
     def generate_context_lengths(self, text: str, max_context: Optional[int] = None) -> List[int]:
-        """ Generate power-of-2 context lengths to test
+        """ Generate power-of-2 context lengths to test with subdivisions
         
         Args:
             text: Reference text
@@ -396,27 +403,38 @@ class ReadabilityDegradationTester:
                 max_context = 32768
                 print(f"Error detecting max context ({e}), using default: {max_context:,}")
         
-        # Generate powers of 2: 1k, 2k, 4k, 8k, 16k, 32k, etc.
-        context_lengths = []
+        # Generate base powers of 2: 1k, 2k, 4k, 8k, 16k, 32k, etc.
+        tiers = []
         power = 10  # Start at 2^10 = 1024
         
         while True:
             length = 2 ** power
             if length > min(text_tokens, max_context):
                 break
-            context_lengths.append(length)
+            tiers.append(length)
             power += 1
         
-        # Ensure we have at least one test case
-        if not context_lengths and text_tokens > 0:
-            # Add smaller lengths if text is very short
+        # Apply subdivision logic
+        if not tiers:
+            # Fallback for very short texts
             for test_length in [512, 256, 128]:
                 if test_length <= text_tokens:
-                    context_lengths = [test_length]
-                    break
+                    return [test_length]
+            return []
+        
+        context_lengths = [tiers[0]]
+        
+        for i in range(len(tiers) - 1):
+            start, end = tiers[i], tiers[i + 1]
+            step = (end - start) / self.divisions
+            
+            # Insert divisions-1 intermediate values
+            for j in range(1, self.divisions):
+                context_lengths.append(int(start + step * j))
+            
+            context_lengths.append(end)
         
         print(f"Generated context lengths: {context_lengths}")
-        
         return context_lengths
     
     def truncate_to_tokens(self, text: str, target_tokens: int) -> str:
@@ -740,10 +758,10 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python readability_test.py novel.txt --api-url http://localhost:5001
-  python readability_test.py document.pdf --max-context 16384 --output results.csv
-  python readability_test.py text.txt --word-list dale_chall_words.txt --rounds 3
-  python readability_test.py novel.txt --rounds 5 --output degradation_test.csv
+  python main.py novel.txt --api-url http://localhost:5001
+  python main.py document.pdf --max-context 16384 --output results.csv
+  python main.py text.txt --word-list dale_chall_words.txt --rounds 3
+  python main.py novel.txt --rounds 5 --output degradation_test.csv --divisions 2
         """
     )
     
@@ -789,15 +807,25 @@ Examples:
         default=None,
         help='Output CSV file for detailed results'
     )
-    
+    parser.add_argument(
+        '--divisions',
+        type=int,
+        default=1,
+        help='Number of context divisions between tiers as a power of 2'
+    )
     args = parser.parse_args()
     
+    if not is_power_of_two(args.divisions):
+        print(f"Divisions must be 1 or a power of 2 such as 2 or 4 or 8")
+        return 1
+        
     try:
         tester = ReadabilityDegradationTester(
             api_url=args.api_url,
             api_password=args.api_password,
             word_list_path=args.word_list,
-            num_rounds=args.rounds
+            num_rounds=args.rounds,
+            divisions=args.divisions
         )
         
         tester.run_test(
