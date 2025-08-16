@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-Model Readability Degradation Test - Multi-Round Version
+Model Readability Degradation Test - Multi-Round Version with Fixed Continuation Point
 
 Tests LLM output quality degradation at increasing context lengths by analyzing
 the readability complexity of generated text continuations using Cloze scores.
 Now supports multiple test rounds per context length with statistical averaging.
+
+CRITICAL FIX: All continuations now start from the same story position to eliminate
+confounding variables. Uses backward-expanding context windows from a fixed point.
 
 Based on observations that models exhibit "flattening" patterns around 8k+ context,
 where sentence structure becomes repetitive and vocabulary diversity drops.
@@ -196,53 +199,120 @@ class StreamingAPIClient:
         if api_password:
             self.headers["Authorization"] = f"Bearer {api_password}"
     
-    def count_tokens(self, text: str) -> int:
-        """ Count tokens using the API """
+    def tokenize_text_batched(self, text: str, chunk_size: int = 45000) -> List[int]:
+        """ Tokenize large text by batching API calls, return token IDs """
         if not text or not text.strip():
-            return 0
-            
+            return []
+        
+        base_url = self.api_url.replace('/v1/chat/completions', '')
+        all_token_ids = []
+        
+        # Split text into manageable chunks
+        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
+        
+        print(f"Tokenizing text in {len(chunks)} chunks...")
+        
+        for i, chunk in enumerate(chunks, 1):
+            try:
+                response = requests.post(
+                    f"{base_url}/api/extra/tokencount",
+                    json={"prompt": chunk},
+                    headers={"Content-Type": "application/json"},
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "ids" in data:
+                        chunk_tokens = data["ids"]
+                        all_token_ids.extend(chunk_tokens)
+                        print(f"  Chunk {i}/{len(chunks)}: {len(chunk_tokens)} tokens")
+                    else:
+                        print(f"  Chunk {i}/{len(chunks)}: No token IDs returned")
+                        # Fallback estimation
+                        estimated_tokens = int(len(chunk.split()) * 1.33)
+                        all_token_ids.extend(range(len(all_token_ids), len(all_token_ids) + estimated_tokens))
+                else:
+                    print(f"  Chunk {i}/{len(chunks)}: API error {response.status_code}")
+                    # Fallback estimation
+                    estimated_tokens = int(len(chunk.split()) * 1.33)
+                    all_token_ids.extend(range(len(all_token_ids), len(all_token_ids) + estimated_tokens))
+                    
+            except Exception as e:
+                print(f"  Chunk {i}/{len(chunks)}: Error {e}")
+                # Fallback estimation
+                estimated_tokens = int(len(chunk.split()) * 1.33)
+                all_token_ids.extend(range(len(all_token_ids), len(all_token_ids) + estimated_tokens))
+        
+        print(f"Total tokens collected: {len(all_token_ids):,}")
+        return all_token_ids
+    
+    def tokens_to_text(self, token_ids: List[int]) -> str:
+        """ Convert token IDs back to text via API """
+        if not token_ids:
+            return ""
+        
         try:
             base_url = self.api_url.replace('/v1/chat/completions', '')
             response = requests.post(
-                f"{base_url}/api/extra/tokencount",
-                json={"prompt": text},
+                f"{base_url}/api/extra/detokenize",
+                json={"ids": token_ids},
                 headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("success", False):
+                    return data.get("result", "")
+                else:
+                    print(f"Token detokenize failed: success=False")
+                    return ""
+            else:
+                print(f"Token detokenize failed: {response.status_code}")
+                return ""
+                
+        except Exception as e:
+            print(f"Token detokenize error: {e}")
+            return ""
+    
+    def get_max_context_length(self) -> int:
+        """ Get model's maximum context length from API """
+        try:
+            base_url = self.api_url.replace('/v1/chat/completions', '')
+            response = requests.get(
+                f"{base_url}/api/extra/true_max_context_length", 
                 timeout=10
             )
             if response.status_code == 200:
-                token_count = int(response.json().get("value", 0))
-                if token_count > 0:
-                    return token_count
+                max_context = int(response.json().get("value", 32768))
+                print(f"Detected model max context: {max_context:,}")
+                return max_context
+            else:
+                print(f"Could not detect max context, using default: 32768")
+                return 32768
         except Exception as e:
-            print(f"Token counting API failed: {e}")
-        
-        # Robust fallback estimation
-        words = text.split()
-        if not words:
-            return 0
-        # More accurate token estimation: ~1.33 tokens per word for English
-        estimated = int(len(words) * 1.33)
-        print(f"Using estimated token count: {estimated:,} (from {len(words):,} words)")
-        return estimated
+            print(f"Error detecting max context ({e}), using default: 32768")
+            return 32768
     
-    def generate_continuation(self, context: str, max_tokens: int = 1024,
-                            temperature: float = 0.7) -> str:
+    def generate_continuation(self, context: str, max_tokens: int = 512,
+                            temperature: float = 1) -> str:
         """ Generate text continuation from context """
         
         instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
-        
+        print(f"Starting from: {context[-20:]}")
         payload = {
             "messages": [
                 {"role": "system", "content": "You are a skilled novelist continuing a story."},
                 {"role": "user", "content": f"{context}\n\n{instruction}"}
             ],
             "max_tokens": max_tokens,
-            "temperature": 1,
-            "top_p": 1,
-            "repetition_penalty": 1,
-            "top_k": 100,
+            "temperature": temperature,
+            "top_p": 0.95,
+            "repetition_penalty": 1.02,
+            "top_k": 20,
             "stream": True,
-            "min_p": 0.1
+            #"min_p": 0.05
         }
         
         result = []
@@ -291,7 +361,7 @@ class StreamingAPIClient:
 # ================================
 
 class ReadabilityDegradationTester:
-    """ Tests model degradation across increasing context lengths """
+    """ Tests model degradation across increasing context lengths with fixed continuation point """
     
     def __init__(self, api_url: str, api_password: Optional[str] = None,
                  word_list_path: str = "easy_words.txt", num_rounds: int = 1, divisions: int = 1):
@@ -310,6 +380,8 @@ class ReadabilityDegradationTester:
         self.results = []
         self.detailed_results = []  # Store individual round results
         self.divisions = max(1, divisions)
+        self.all_tokens = []  # Full tokenized text
+        self.working_tokens = []  # Last max_context tokens
         
     def normalize_content(self, content: str) -> str:
         """ Convert fixed-width text and normalize characters """
@@ -367,61 +439,67 @@ class ReadabilityDegradationTester:
                 print(f"Fallback reading also failed: {e2}")
             raise
     
-    def generate_context_lengths(self, text: str, max_context: Optional[int] = None) -> List[int]:
+    def prepare_tokenized_text(self, text: str, max_context: int) -> bool:
+        """ Tokenize text and prepare working token set 
+        
+        Args:
+            text: Reference text to tokenize
+            max_context: Maximum context length we'll test
+            
+        Returns:
+            True if successful, False if insufficient text
+        """
+        print(f"\n{'='*60}")
+        print("PREPARING TOKENIZED TEXT")
+        print(f"{'='*60}")
+        
+        # Tokenize the full text
+        self.all_tokens = self.client.tokenize_text_batched(text)
+        
+        if not self.all_tokens:
+            print("ERROR: Failed to tokenize text")
+            return False
+        
+        total_tokens = len(self.all_tokens)
+        print(f"Total tokens in reference text: {total_tokens:,}")
+        
+        # Check if we have enough tokens for testing
+        min_required = int(max_context * 0.9) + 1024
+        if total_tokens < min_required:
+            print(f"ERROR: Insufficient text. Need at least {min_required:,} tokens, got {total_tokens:,}")
+            return False
+        
+        # Take the last max_context tokens as our working set
+        self.working_tokens = self.all_tokens[-max_context:]
+        print(f"Working with last {len(self.working_tokens):,} tokens for testing")
+        
+        return True
+    
+    def generate_context_lengths(self, max_context: int) -> List[int]:
         """ Generate power-of-2 context lengths to test with subdivisions
         
         Args:
-            text: Reference text
-            max_context: Maximum context length (default: auto-detect)
+            max_context: Maximum context length
             
         Returns:
             List of context lengths in tokens
         """
-        if not text or not text.strip():
-            print("ERROR: Empty text provided to generate_context_lengths")
-            return []
-            
-        text_tokens = self.client.count_tokens(text)
-        print(f"Reference text token count: {text_tokens:,}")
-        
-        if text_tokens == 0:
-            print("ERROR: Could not count tokens in reference text")
-            return []
-        
-        if max_context is None:
-            # Try to detect model's max context
-            try:
-                base_url = self.client.api_url.replace('/v1/chat/completions', '')
-                response = requests.get(f"{base_url}/api/extra/true_max_context_length", timeout=10)
-                if response.status_code == 200:
-                    max_context = int(response.json().get("value", 32768))
-                    print(f"Detected model max context: {max_context:,}")
-                else:
-                    max_context = 32768
-                    print(f"Could not detect max context, using default: {max_context:,}")
-            except Exception as e:
-                max_context = 32768
-                print(f"Error detecting max context ({e}), using default: {max_context:,}")
-        
         # Generate base powers of 2: 1k, 2k, 4k, 8k, 16k, 32k, etc.
         tiers = []
         power = 10  # Start at 2^10 = 1024
         
         while True:
             length = 2 ** power
-            if length > min(text_tokens, max_context):
+            if length > max_context:
                 break
             tiers.append(length)
             power += 1
         
-        # Apply subdivision logic
         if not tiers:
-            # Fallback for very short texts
-            for test_length in [512, 256, 128]:
-                if test_length <= text_tokens:
-                    return [test_length]
-            return []
+            # Fallback for very small max_context
+            return [min(1024, max_context)]
         
+        # Apply subdivision logic
         context_lengths = [tiers[0]]
         
         for i in range(len(tiers) - 1):
@@ -437,28 +515,25 @@ class ReadabilityDegradationTester:
         print(f"Generated context lengths: {context_lengths}")
         return context_lengths
     
-    def truncate_to_tokens(self, text: str, target_tokens: int) -> str:
-        """ Truncate text to approximately target token count """
-        words = text.split()
-        # Rough estimation: 1.3 words per token
-        target_tokens = int(target_tokens * 0.95)
-        target_words = int(target_tokens / 1.3)
+    def build_context_window(self, context_length: int) -> str:
+        """ Build context window from working tokens using backward expansion
         
-        if target_words >= len(words):
-            return text
+        Args:
+            context_length: Number of tokens to include in context
             
-        truncated = ' '.join(words[:target_words])
+        Returns:
+            Context text for this tier
+        """
+        if context_length > len(self.working_tokens):
+            # Use all available working tokens
+            context_tokens = self.working_tokens
+        else:
+            # Take the last context_length tokens from working set
+            context_tokens = self.working_tokens[-context_length:]
         
-        # Fine-tune by checking actual token count
-        actual_tokens = self.client.count_tokens(truncated)
-        
-        # Adjust if needed
-        while actual_tokens > target_tokens and target_words > 0:
-            target_words = int(target_words * 0.9)
-            truncated = ' '.join(words[:target_words])
-            actual_tokens = self.client.count_tokens(truncated)
-        
-        return truncated
+        # Convert tokens back to text
+        context_text = self.client.tokens_to_text(context_tokens)
+        return context_text
     
     def average_results(self, round_results: List[Dict]) -> Dict[str, Any]:
         """ Average results across multiple rounds """
@@ -504,7 +579,7 @@ class ReadabilityDegradationTester:
     
     def run_test(self, file_path: str, max_context: Optional[int] = None,
                  output_file: Optional[str] = None) -> List[Dict]:
-        """ Run the complete degradation test
+        """ Run the complete degradation test with fixed continuation point
         
         Args:
             file_path: Path to reference text file
@@ -515,7 +590,7 @@ class ReadabilityDegradationTester:
             List of averaged test results
         """
         print("=" * 60)
-        print("MODEL READABILITY DEGRADATION TEST")
+        print("MODEL READABILITY DEGRADATION TEST - FIXED CONTINUATION POINT")
         if self.num_rounds > 1:
             print(f"Running {self.num_rounds} rounds per context length")
         print("=" * 60)
@@ -523,18 +598,31 @@ class ReadabilityDegradationTester:
         # Load reference text
         reference_text = self.load_reference_text(file_path)
         
+        # Determine max context
+        if max_context is None:
+            max_context = self.client.get_max_context_length()
+        else:
+            print(f"Using user-specified max context: {max_context:,}")
+        
+        # Prepare tokenized text
+        if not self.prepare_tokenized_text(reference_text, max_context):
+            print("Failed to prepare tokenized text")
+            return []
+        
         # Analyze baseline readability
-        baseline_analysis = analyze_text_readability(reference_text[:5000])  # First 5k chars
-        print(f"\nBaseline text readability:")
+        baseline_text = self.client.tokens_to_text(self.working_tokens[-5000:] if len(self.working_tokens) > 5000 else self.working_tokens)
+        baseline_analysis = analyze_text_readability(baseline_text)
+        print(f"\nBaseline text readability (from continuation point area):")
         print(f"  Cloze Score: {baseline_analysis['cloze_score']}")
         print(f"  Reading Level: {baseline_analysis['reading_level']}")
         print(f"  Vocabulary Diversity: {baseline_analysis['vocabulary_diversity']}")
         
         # Generate test context lengths
-        context_lengths = self.generate_context_lengths(reference_text, max_context)
+        context_lengths = self.generate_context_lengths(max_context)
         
         print(f"\n{'='*60}")
         print("RUNNING DEGRADATION TESTS")
+        print(f"All continuations start from same story position!")
         print(f"{'='*60}")
         
         self.results = []
@@ -546,11 +634,14 @@ class ReadabilityDegradationTester:
                 print(f"Running {self.num_rounds} rounds...")
             print("-" * 50)
             
-            # Prepare context (same for all rounds)
-            context = self.truncate_to_tokens(reference_text, context_length)
-            actual_tokens = self.client.count_tokens(context)
+            # Build context window (same for all rounds)
+            context = self.build_context_window(context_length)
             
-            print(f"Actual context tokens: {actual_tokens:,}")
+            if not context:
+                print(f"WARNING: Failed to build context for {context_length} tokens")
+                continue
+            
+            print(f"Context built successfully ({len(context.split())} words)")
             
             # Run multiple rounds
             round_results = []
@@ -562,7 +653,7 @@ class ReadabilityDegradationTester:
                     print(f"Generating continuation...")
                 
                 # Generate continuation
-                continuation = self.client.generate_continuation(context, max_tokens=1024)
+                continuation = self.client.generate_continuation(context, max_tokens=512)
                 
                 if not continuation:
                     print(f"WARNING: No continuation generated for round {round_num + 1}")
@@ -574,7 +665,7 @@ class ReadabilityDegradationTester:
                 # Store detailed result
                 detailed_result = {
                     'context_length': context_length,
-                    'actual_context_tokens': actual_tokens,
+                    'actual_context_tokens': context_length,  # Now exact
                     'round_number': round_num + 1,
                     'continuation_length': len(continuation),
                     'timestamp': datetime.now().isoformat(),
@@ -627,6 +718,7 @@ class ReadabilityDegradationTester:
         print("DEGRADATION ANALYSIS")
         if self.num_rounds > 1:
             print(f"(Based on averages of {self.num_rounds} rounds each)")
+        print("✅ All continuations from SAME story position")
         print(f"{'='*60}")
         
         # Calculate trends
@@ -754,7 +846,7 @@ class ReadabilityDegradationTester:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Test LLM readability degradation across context lengths with multi-round averaging",
+        description="Test LLM readability degradation across context lengths with fixed continuation point",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -762,6 +854,9 @@ Examples:
   python main.py document.pdf --max-context 16384 --output results.csv
   python main.py text.txt --word-list dale_chall_words.txt --rounds 3
   python main.py novel.txt --rounds 5 --output degradation_test.csv --divisions 2
+
+CRITICAL IMPROVEMENT: All continuations now start from the same story position!
+This eliminates confounding variables from different story contexts.
         """
     )
     
@@ -798,7 +893,7 @@ Examples:
     parser.add_argument(
         '--rounds',
         type=int,
-        default=1,
+        default=3,
         help='Number of test rounds per context length (default: 1)'
     )
     
