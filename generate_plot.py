@@ -92,7 +92,11 @@ def get_plot_colors_and_markers():
     return colors, markers
 
 def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300):
-    """ Create comprehensive comparison plots for multiple datasets.
+    """ Create adaptive baseline comparison plots for multiple datasets.
+    
+    Creates two plots:
+    1. Creativity Plot: vocab_diversity + sentence_length_variance
+    2. Degradation Plot: cloze_score + adaptive sentence length penalty
     
     Args:
         data: Merged dataframe with all dataset metrics
@@ -104,48 +108,104 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     import matplotlib
     matplotlib.use('Agg')
     
-    fig, axes = plt.subplots(2, 3, figsize=(18, 12))
-    fig.suptitle('Multi-Dataset Performance Comparison', fontsize=16, fontweight='bold')
-    
-    metrics = [
-        ('cloze_score', 'Cloze Score', 'Score'),
-        ('pct_unfamiliar_words', 'Unfamiliar Words', 'Percentage'),
-        ('vocabulary_diversity', 'Vocabulary Diversity', 'Diversity Score'),
-        ('continuation_length', 'Continuation Length', 'Characters'),
-        ('avg_sentence_length', 'Average Sentence Length', 'Words'),
-        ('sentence_length_variance', 'Sentence Length Variance', 'Variance')
-    ]
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    fig.suptitle('Model Performance Analysis: Creativity vs Degradation', fontsize=16, fontweight='bold')
     
     colors, markers = get_plot_colors_and_markers()
     
-    for i, (metric, title, ylabel) in enumerate(metrics):
-        row = i // 3
-        col = i % 3
-        ax = axes[row, col]
+    # Fixed y-axis ranges for consistent cross-comparison
+    VOCAB_DIVERSITY_RANGE = (0.20, 0.70)
+    SENTENCE_VARIANCE_RANGE = (20, 200)
+    CLOZE_SCORE_RANGE = (15, 40)
+    SENTENCE_PENALTY_RANGE = (0, 2.0)  # Log penalty range
+    
+    # Plot 1: Creativity Metrics
+    ax1 = axes[0]
+    ax1_twin = ax1.twinx()
+    
+    for j, dataset_name in enumerate(dataset_names):
+        vocab_col = f'vocabulary_diversity_{dataset_name}'
+        variance_col = f'sentence_length_variance_{dataset_name}'
         
-        # Plot each dataset
-        for j, dataset_name in enumerate(dataset_names):
-            column_name = f'{metric}_{dataset_name}'
-            if column_name in data.columns:
-                # Convert percentage if needed
-                values = data[column_name] * (100 if metric == 'pct_unfamiliar_words' else 1)
-                # Filter out NaN values for plotting
-                mask = values.notna() & data['context_length'].notna()
-                if mask.any():
-                    ax.plot(data.loc[mask, 'context_length'], values[mask], 
-                           marker=markers[j % len(markers)], 
-                           color=colors[j % len(colors)],
-                           linewidth=3, markersize=6, label=dataset_name)
+        if vocab_col in data.columns:
+            mask = data[vocab_col].notna() & data['context_length'].notna()
+            if mask.any():
+                ax1.plot(data.loc[mask, 'context_length'], data.loc[mask, vocab_col], 
+                        marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                        linewidth=3, markersize=6, label=f'{dataset_name} (vocab)', linestyle='-')
         
-        # Formatting
-        ax.set_xscale('log')
-        ax.set_xlabel('Context Length')
-        ax.set_ylabel(ylabel)
-        ax.set_title(title, fontweight='bold')
-        ax.grid(True, alpha=0.3)
-        ax.legend()
+        if variance_col in data.columns:
+            mask = data[variance_col].notna() & data['context_length'].notna()
+            if mask.any():
+                ax1_twin.plot(data.loc[mask, 'context_length'], data.loc[mask, variance_col], 
+                             marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                             linewidth=3, markersize=6, label=f'{dataset_name} (variance)', linestyle='--', alpha=0.7)
+    
+    ax1.set_xscale('log')
+    ax1.set_xlabel('Context Length')
+    ax1.set_ylabel('Vocabulary Diversity', color='black')
+    ax1.set_title('Creativity Metrics', fontweight='bold')
+    ax1.set_ylim(VOCAB_DIVERSITY_RANGE)
+    ax1.grid(True, alpha=0.3)
+    
+    ax1_twin.set_ylabel('Sentence Length Variance', color='gray')
+    ax1_twin.set_ylim(SENTENCE_VARIANCE_RANGE)
+    
+    # Combined legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax1_twin.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='best')
+    
+    # Plot 2: Degradation Metrics (with adaptive baseline)
+    ax2 = axes[1]
+    ax2_twin = ax2.twinx()
+    
+    for j, dataset_name in enumerate(dataset_names):
+        cloze_col = f'cloze_score_{dataset_name}'
+        sentence_col = f'avg_sentence_length_{dataset_name}'
         
-        # Format x-axis labels
+        # Plot cloze score
+        if cloze_col in data.columns:
+            mask = data[cloze_col].notna() & data['context_length'].notna()
+            if mask.any():
+                ax2.plot(data.loc[mask, 'context_length'], data.loc[mask, cloze_col], 
+                        marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                        linewidth=3, markersize=6, label=f'{dataset_name} (cloze)', linestyle='-')
+        
+        # Calculate adaptive sentence penalty
+        if sentence_col in data.columns and cloze_col in data.columns:
+            # Find optimal point (minimum cloze score)
+            dataset_data = data[[cloze_col, sentence_col, 'context_length']].dropna()
+            if len(dataset_data) > 0:
+                optimal_idx = dataset_data[cloze_col].idxmin()
+                baseline_sentence_length = dataset_data.loc[optimal_idx, sentence_col]
+                
+                # Calculate log penalty for deviations from baseline
+                sentence_penalty = np.log(np.maximum(baseline_sentence_length / dataset_data[sentence_col], 0.1))
+                sentence_penalty = np.clip(sentence_penalty, 0, SENTENCE_PENALTY_RANGE[1])
+                
+                ax2_twin.plot(dataset_data['context_length'], sentence_penalty, 
+                             marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                             linewidth=3, markersize=6, label=f'{dataset_name} (sent penalty)', 
+                             linestyle='--', alpha=0.7)
+    
+    ax2.set_xscale('log')
+    ax2.set_xlabel('Context Length')
+    ax2.set_ylabel('Cloze Score (Predictability)', color='black')
+    ax2.set_title('Degradation Metrics', fontweight='bold')
+    ax2.set_ylim(CLOZE_SCORE_RANGE)
+    ax2.grid(True, alpha=0.3)
+    
+    ax2_twin.set_ylabel('Sentence Length Penalty (Log)', color='gray')
+    ax2_twin.set_ylim(SENTENCE_PENALTY_RANGE)
+    
+    # Combined legend
+    lines3, labels3 = ax2.get_legend_handles_labels()
+    lines4, labels4 = ax2_twin.get_legend_handles_labels()
+    ax2.legend(lines3 + lines4, labels3 + labels4, loc='best')
+    
+    # Format x-axis labels for both plots
+    for ax in [ax1, ax2]:
         if len(data['context_length'].dropna()) > 0:
             unique_contexts = sorted(data['context_length'].dropna().unique())
             ax.set_xticks(unique_contexts)
@@ -158,14 +218,14 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     plt.close()
 
 def analyze_performance_ranges(data, dataset_names):
-    """ Analyze performance across different context ranges for all datasets.
+    """ Analyze creativity and degradation metrics across context ranges.
     
     Args:
         data: Merged dataframe with all dataset metrics
         dataset_names: List of dataset names
     """
     print("=" * 80)
-    print("PERFORMANCE ANALYSIS BY CONTEXT LENGTH")
+    print("CREATIVITY & DEGRADATION ANALYSIS BY CONTEXT LENGTH")
     print("=" * 80)
     
     # Get available context lengths
@@ -178,65 +238,100 @@ def analyze_performance_ranges(data, dataset_names):
             
         print(f"\nContext Length: {int(ctx):,}")
         
-        # Cloze score comparison
-        print("  Cloze Scores:")
-        cloze_scores = {}
-        for dataset in dataset_names:
-            col_name = f'cloze_score_{dataset}'
-            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
-                score = ctx_data[col_name].iloc[0]
-                cloze_scores[dataset] = score
-                print(f"    {dataset}: {score:.3f}")
+        # Creativity Metrics
+        print("  CREATIVITY METRICS:")
         
-        if cloze_scores:
-            best_cloze = max(cloze_scores, key=cloze_scores.get)
-            print(f"    Winner: {best_cloze}")
-        
-        # Unfamiliar words (lower is better)
-        print("  Unfamiliar Word Percentages:")
-        unfam_scores = {}
-        for dataset in dataset_names:
-            col_name = f'pct_unfamiliar_words_{dataset}'
-            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
-                score = ctx_data[col_name].iloc[0]
-                unfam_scores[dataset] = score
-                print(f"    {dataset}: {score*100:.1f}%")
-        
-        if unfam_scores:
-            best_unfam = min(unfam_scores, key=unfam_scores.get)
-            print(f"    Winner (lowest): {best_unfam}")
-        
-        # Vocabulary diversity
-        print("  Vocabulary Diversity:")
+        # Vocabulary diversity (higher = better)
+        print("    Vocabulary Diversity:")
         vocab_scores = {}
         for dataset in dataset_names:
             col_name = f'vocabulary_diversity_{dataset}'
             if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
                 score = ctx_data[col_name].iloc[0]
                 vocab_scores[dataset] = score
-                print(f"    {dataset}: {score:.3f}")
+                print(f"      {dataset}: {score:.3f}")
         
         if vocab_scores:
             best_vocab = max(vocab_scores, key=vocab_scores.get)
-            print(f"    Winner: {best_vocab}")
+            print(f"      Winner: {best_vocab}")
+        
+        # Sentence length variance (higher = better)
+        print("    Sentence Length Variance:")
+        variance_scores = {}
+        for dataset in dataset_names:
+            col_name = f'sentence_length_variance_{dataset}'
+            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
+                score = ctx_data[col_name].iloc[0]
+                variance_scores[dataset] = score
+                print(f"      {dataset}: {score:.1f}")
+        
+        if variance_scores:
+            best_variance = max(variance_scores, key=variance_scores.get)
+            print(f"      Winner: {best_variance}")
+        
+        # Degradation Metrics
+        print("  DEGRADATION METRICS:")
+        
+        # Cloze score (lower = better, more sophisticated)
+        print("    Cloze Scores (lower = better):")
+        cloze_scores = {}
+        for dataset in dataset_names:
+            col_name = f'cloze_score_{dataset}'
+            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
+                score = ctx_data[col_name].iloc[0]
+                cloze_scores[dataset] = score
+                print(f"      {dataset}: {score:.3f}")
+        
+        if cloze_scores:
+            best_cloze = min(cloze_scores, key=cloze_scores.get)
+            print(f"      Winner (lowest): {best_cloze}")
+        
+        # Average sentence length consistency
+        print("    Average Sentence Length:")
+        sentence_scores = {}
+        for dataset in dataset_names:
+            col_name = f'avg_sentence_length_{dataset}'
+            if col_name in ctx_data.columns and not ctx_data[col_name].isna().all():
+                score = ctx_data[col_name].iloc[0]
+                sentence_scores[dataset] = score
+                print(f"      {dataset}: {score:.1f} words")
+        
+        # Show deviation from each model's optimal baseline
+        print("    Sentence Length Penalties (from each model's optimum):")
+        for dataset in dataset_names:
+            cloze_col = f'cloze_score_{dataset}'
+            sentence_col = f'avg_sentence_length_{dataset}'
+            
+            if cloze_col in data.columns and sentence_col in data.columns:
+                dataset_data = data[[cloze_col, sentence_col, 'context_length']].dropna()
+                if len(dataset_data) > 0:
+                    optimal_idx = dataset_data[cloze_col].idxmin()
+                    baseline_sentence_length = dataset_data.loc[optimal_idx, sentence_col]
+                    current_sentence_length = ctx_data[sentence_col].iloc[0] if not ctx_data[sentence_col].isna().all() else None
+                    
+                    if current_sentence_length is not None:
+                        penalty = np.log(max(baseline_sentence_length / current_sentence_length, 0.1))
+                        penalty = max(0, min(penalty, 2.0))  # Clip to reasonable range
+                        print(f"      {dataset}: {penalty:.3f} (baseline: {baseline_sentence_length:.1f})")
+
 
 def create_summary_analysis(data, dataset_names):
-    """ Create summary statistics and insights for all datasets.
+    """ Create summary statistics focusing on creativity and degradation patterns.
     
     Args:
         data: Merged dataframe with all dataset metrics
         dataset_names: List of dataset names
     """
     print("\n" + "=" * 80)
-    print("SUMMARY INSIGHTS")
+    print("SUMMARY INSIGHTS: CREATIVITY vs DEGRADATION")
     print("=" * 80)
     
-    # Overall averages
-    print("Overall Performance Averages:")
+    # Overall creativity averages
+    print("CREATIVITY PERFORMANCE AVERAGES:")
     
-    metrics_to_analyze = ['cloze_score', 'vocabulary_diversity', 'pct_unfamiliar_words']
+    creativity_metrics = ['vocabulary_diversity', 'sentence_length_variance']
     
-    for metric in metrics_to_analyze:
+    for metric in creativity_metrics:
         print(f"\n  {metric.replace('_', ' ').title()}:")
         metric_values = {}
         
@@ -246,36 +341,82 @@ def create_summary_analysis(data, dataset_names):
                 avg_val = data[col_name].mean()
                 if not pd.isna(avg_val):
                     metric_values[dataset] = avg_val
-                    if metric == 'pct_unfamiliar_words':
-                        print(f"    {dataset}: {avg_val*100:.1f}%")
-                    elif metric == 'continuation_length':
-                        print(f"    {dataset}: {avg_val:.0f} chars")
-                        #pass
-                    else:
-                        print(f"    {dataset}: {avg_val:.3f}")
+                    print(f"    {dataset}: {avg_val:.3f}")
         
         # Find best performing dataset for this metric
         if metric_values:
-            if metric == 'pct_unfamiliar_words':
-                best_dataset = min(metric_values, key=metric_values.get)
-                print(f"    Best (lowest): {best_dataset}")
-            else:
-                best_dataset = max(metric_values, key=metric_values.get)
-                print(f"    Best: {best_dataset}")
+            best_dataset = max(metric_values, key=metric_values.get)
+            print(f"    Best: {best_dataset}")
     
-    # Context-specific advantages
-    print(f"\nPeak Performance by Context Length:")
+    # Degradation analysis
+    print(f"\nDEGRADATION ANALYSIS:")
     
-    available_contexts = sorted(data['context_length'].dropna().unique())
+    print("  Average Cloze Scores (lower = better):")
+    for dataset in dataset_names:
+        cloze_col = f'cloze_score_{dataset}'
+        if cloze_col in data.columns:
+            avg_val = data[cloze_col].mean()
+            if not pd.isna(avg_val):
+                print(f"    {dataset}: {avg_val:.3f}")
+    
+    # Find each model's optimal context length and performance
+    print(f"\nOPTIMAL PERFORMANCE POINTS:")
     
     for dataset in dataset_names:
         cloze_col = f'cloze_score_{dataset}'
+        vocab_col = f'vocabulary_diversity_{dataset}'
+        variance_col = f'sentence_length_variance_{dataset}'
+        
         if cloze_col in data.columns and not data[cloze_col].isna().all():
-            best_idx = data[cloze_col].idxmax()
-            if not pd.isna(best_idx):
-                best_ctx = data.loc[best_idx, 'context_length']
-                best_score = data.loc[best_idx, cloze_col]
-                print(f"  {dataset}: {int(best_ctx):,} context (score: {best_score:.3f})")
+            # Find the optimal point (minimum cloze score)
+            dataset_data = data[[cloze_col, 'context_length', vocab_col, variance_col]].dropna()
+            if len(dataset_data) > 0:
+                optimal_idx = dataset_data[cloze_col].idxmin()
+                optimal_ctx = dataset_data.loc[optimal_idx, 'context_length']
+                optimal_cloze = dataset_data.loc[optimal_idx, cloze_col]
+                optimal_vocab = dataset_data.loc[optimal_idx, vocab_col] if vocab_col in dataset_data.columns else None
+                optimal_variance = dataset_data.loc[optimal_idx, variance_col] if variance_col in dataset_data.columns else None
+                
+                print(f"  {dataset}:")
+                print(f"    Optimal context: {int(optimal_ctx):,}")
+                print(f"    Cloze score: {optimal_cloze:.3f}")
+                if optimal_vocab is not None:
+                    print(f"    Vocab diversity: {optimal_vocab:.3f}")
+                if optimal_variance is not None:
+                    print(f"    Sentence variance: {optimal_variance:.1f}")
+    
+    # Degradation patterns
+    print(f"\nDEGRADATION PATTERNS:")
+    available_contexts = sorted(data['context_length'].dropna().unique())
+    
+    if len(available_contexts) >= 3:
+        early_ctx = available_contexts[1]  # Skip 1K, use 2K
+        late_ctx = available_contexts[-1]  # Use maximum context
+        
+        print(f"  Performance change from {int(early_ctx/1000)}K to {int(late_ctx/1000)}K context:")
+        
+        for dataset in dataset_names:
+            cloze_col = f'cloze_score_{dataset}'
+            vocab_col = f'vocabulary_diversity_{dataset}'
+            
+            if cloze_col in data.columns and vocab_col in data.columns:
+                early_data = data[data['context_length'] == early_ctx]
+                late_data = data[data['context_length'] == late_ctx]
+                
+                if len(early_data) > 0 and len(late_data) > 0:
+                    early_cloze = early_data[cloze_col].iloc[0] if not early_data[cloze_col].isna().all() else None
+                    late_cloze = late_data[cloze_col].iloc[0] if not late_data[cloze_col].isna().all() else None
+                    early_vocab = early_data[vocab_col].iloc[0] if not early_data[vocab_col].isna().all() else None
+                    late_vocab = late_data[vocab_col].iloc[0] if not late_data[vocab_col].isna().all() else None
+                    
+                    if all(v is not None for v in [early_cloze, late_cloze, early_vocab, late_vocab]):
+                        cloze_change = late_cloze - early_cloze
+                        vocab_change = late_vocab - early_vocab
+                        
+                        print(f"    {dataset}:")
+                        print(f"      Cloze change: {cloze_change:+.3f} ({'worse' if cloze_change > 0 else 'better'})")
+                        print(f"      Vocab change: {vocab_change:+.3f} ({'worse' if vocab_change < 0 else 'better'})")
+
 
 def parse_arguments():
     """ Parse command line arguments for multiple CSV file inputs.

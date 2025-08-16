@@ -26,9 +26,18 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Literal, TypeAlias
 import requests
+from chunker_regex import chunk_regex
+
 from requests.exceptions import RequestException
 from bs4 import BeautifulSoup
 from extractous import Extractor
+
+# Outlier detection functionality
+from outlier_detection import (
+    analyze_round_outliers, 
+    filter_outliers_from_results,
+    print_outlier_summary
+)
 
 # Suppress BeautifulSoup warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="bs4")
@@ -198,7 +207,56 @@ class StreamingAPIClient:
         
         if api_password:
             self.headers["Authorization"] = f"Bearer {api_password}"
-    
+            
+    def count_tokens(self, text: str) -> int:
+        base_url = self.api_url.replace('v1/chat/completions', '')
+        try:
+            response = requests.post(
+                f"{base_url}/api/extra/tokencount",
+                json={"prompt": text},
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "value" in data:
+                    token_count = data["value"]
+                return token_count
+                
+            return None
+        except Exception as e:
+            print(f"Error counting tokens ({e})")
+            return None
+        
+            
+    def prune_text(self, text: str, max_context: int = 32768):
+        
+        """ Get max amount of text that fits into a natural breakpoint
+        """
+        
+        total_tokens = self.count_tokens(text)
+        if total_tokens < max_context:
+            return text
+
+        # chunk_regex is designed to break at natural language points
+        # to preserve context and readability
+        matches = chunk_regex.finditer(text)
+        current_size = 0
+        chunks = []
+        
+        for match in matches:
+            chunk = match.group(0)
+            chunk_size = self.count_tokens(chunk)
+            if current_size + chunk_size > max_context:
+                if not chunks:
+                    chunks.append(chunk)
+                break
+            chunks.append(chunk)
+            current_size += chunk_size
+        
+        return ''.join(chunks)
+        
     def tokenize_text_batched(self, text: str, chunk_size: int = 45000) -> List[int]:
         """ Tokenize large text by batching API calls, return token IDs """
         if not text or not text.strip():
@@ -295,8 +353,31 @@ class StreamingAPIClient:
             print(f"Error detecting max context ({e}), using default: 32768")
             return 32768
     
-    def generate_continuation(self, context: str, max_tokens: int = 512,
-                            temperature: float = 1) -> str:
+    def get_model_name(self) -> Optional[str]:
+        """ Get model name from API """
+        try:
+            base_url = self.api_url.replace('/v1/chat/completions', '')
+            response = requests.get(
+                f"{base_url}/api/v1/model",
+                headers={"Content-Type": "application/json"},
+                timeout=30
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if "result" in data:
+                    model_name = str(data["result"]).replace('koboldcpp/', '')
+                    print(f"Detected model name: {model_name}")
+                    return model_name
+            print("Could not detect model name from API")
+            return None
+        except Exception as e:
+            print(f"Error detecting model name ({e})")
+            return None
+    
+    def generate_continuation(self, context: str, max_tokens: int = 1024,
+                            temperature: float = 1.0, top_k: int = 100, 
+                            top_p: float = 1.0, min_p: float = 0.1, 
+                            rep_pen: float = 1.01) -> str:
         """ Generate text continuation from context """
         
         instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
@@ -308,11 +389,11 @@ class StreamingAPIClient:
             ],
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "top_p": 0.95,
-            "repetition_penalty": 1.02,
-            "top_k": 20,
+            "top_p": top_p,
+            "repetition_penalty": rep_pen,
+            "top_k": top_k,
             "stream": True,
-            #"min_p": 0.05
+            "min_p": min_p
         }
         
         result = []
@@ -364,7 +445,10 @@ class ReadabilityDegradationTester:
     """ Tests model degradation across increasing context lengths with fixed continuation point """
     
     def __init__(self, api_url: str, api_password: Optional[str] = None,
-                 word_list_path: str = "easy_words.txt", num_rounds: int = 1, divisions: int = 1):
+                 word_list_path: str = "easy_words.txt", num_rounds: int = 1, divisions: int = 1,
+                 model_name: Optional[str] = None, max_tokens: int = 1024, 
+                 temperature: float = 1.0, top_k: int = 100, top_p: float = 1.0, 
+                 min_p: float = 0.1, rep_pen: float = 1.01):
         """ Initialize the degradation tester
         
         Args:
@@ -373,6 +457,13 @@ class ReadabilityDegradationTester:
             word_list_path: Path to Dale-Chall word list
             num_rounds: Number of test rounds per context length
             divisions: Number of splits per power of 2 tier
+            model_name: Optional model name override
+            max_tokens: Maximum tokens to generate
+            temperature: Generation temperature
+            top_k: Top-k sampling
+            top_p: Top-p sampling  
+            min_p: Min-p sampling
+            rep_pen: Repetition penalty
         """
         self.client = StreamingAPIClient(api_url, api_password)
         initialize_word_list(word_list_path)
@@ -382,6 +473,26 @@ class ReadabilityDegradationTester:
         self.divisions = max(1, divisions)
         self.all_tokens = []  # Full tokenized text
         self.working_tokens = []  # Last max_context tokens
+        
+        # Generation parameters
+        self.max_tokens = max_tokens
+        self.temperature = temperature
+        self.top_k = top_k
+        self.top_p = top_p
+        self.min_p = min_p
+        self.rep_pen = rep_pen
+        
+        # Model name (try API first, then fallback to provided name)
+        self.model_name = model_name or self.client.get_model_name() or "unknown-model"
+    
+    def generate_output_filename(self) -> str:
+        """ Generate output filename based on model name and test parameters """
+        # Clean model name for filename
+        clean_model = self.model_name.replace('/', '-').replace('\\', '-').replace(':', '-')
+        
+        # Generate filename with key parameters
+        filename = f"{clean_model}-{self.num_rounds}rounds_{self.divisions}divs.csv"
+        return filename
         
     def normalize_content(self, content: str) -> str:
         """ Convert fixed-width text and normalize characters """
@@ -453,8 +564,11 @@ class ReadabilityDegradationTester:
         print("PREPARING TOKENIZED TEXT")
         print(f"{'='*60}")
         
+        # Prune the text to a natural breakpoint
+        pruned_text = self.client.prune_text(text, max_context)
+        
         # Tokenize the full text
-        self.all_tokens = self.client.tokenize_text_batched(text)
+        self.all_tokens = self.client.tokenize_text_batched(pruned_text)
         
         if not self.all_tokens:
             print("ERROR: Failed to tokenize text")
@@ -464,7 +578,7 @@ class ReadabilityDegradationTester:
         print(f"Total tokens in reference text: {total_tokens:,}")
         
         # Check if we have enough tokens for testing
-        min_required = int(max_context * 0.9) + 1024
+        min_required = int(max_context * 0.9)
         if total_tokens < min_required:
             print(f"ERROR: Insufficient text. Need at least {min_required:,} tokens, got {total_tokens:,}")
             return False
@@ -577,14 +691,12 @@ class ReadabilityDegradationTester:
         
         return averaged
     
-    def run_test(self, file_path: str, max_context: Optional[int] = None,
-                 output_file: Optional[str] = None) -> List[Dict]:
+    def run_test(self, file_path: str, max_context: Optional[int] = None) -> List[Dict]:
         """ Run the complete degradation test with fixed continuation point
         
         Args:
             file_path: Path to reference text file
             max_context: Maximum context length to test
-            output_file: Optional CSV output file
             
         Returns:
             List of averaged test results
@@ -653,7 +765,15 @@ class ReadabilityDegradationTester:
                     print(f"Generating continuation...")
                 
                 # Generate continuation
-                continuation = self.client.generate_continuation(context, max_tokens=512)
+                continuation = self.client.generate_continuation(
+                    context, 
+                    max_tokens=self.max_tokens,
+                    temperature=self.temperature,
+                    top_k=self.top_k,
+                    top_p=self.top_p,
+                    min_p=self.min_p,
+                    rep_pen=self.rep_pen
+                )
                 
                 if not continuation:
                     print(f"WARNING: No continuation generated for round {round_num + 1}")
@@ -700,12 +820,39 @@ class ReadabilityDegradationTester:
             print(f"  Vocabulary Diversity: {averaged_result['vocabulary_diversity']:5.3f} "
                   f"(±{averaged_result['vocab_diversity_std']:5.3f})")
         
+        # Outlier analysis
+        if len(self.detailed_results) >= 4:  # Need minimum data for outlier detection
+            outlier_analysis = analyze_round_outliers(self.detailed_results)
+            if outlier_analysis.get('has_outliers', False):
+                print_outlier_summary(outlier_analysis, max_context)
+                # Filter severe outliers from detailed results for final averaging
+                filtered_results = filter_outliers_from_results(
+                    self.detailed_results, outlier_analysis, exclude_severe_only=True
+                )
+                if len(filtered_results) != len(self.detailed_results):
+                    print(f"\n📊 Filtered {len(self.detailed_results) - len(filtered_results)} severe outlier rounds")
+                    # Recalculate averaged results without severe outliers
+                    context_groups = {}
+                    for result in filtered_results:
+                        ctx_len = result['context_length']
+                        if ctx_len not in context_groups:
+                            context_groups[ctx_len] = []
+                        context_groups[ctx_len].append(result)
+                    
+                    # Rebuild results with filtered data
+                    filtered_averaged_results = []
+                    for ctx_len in sorted(context_groups.keys()):
+                        averaged = self.average_results(context_groups[ctx_len])
+                        filtered_averaged_results.append(averaged)
+                    
+                    self.results = filtered_averaged_results
+        
         # Analysis and summary
         self._print_summary()
         
-        # Save results
-        if output_file:
-            self._save_results(output_file)
+        # Auto-generate filename and save results
+        output_file = self.generate_output_filename()
+        self._save_results(output_file)
         
         return self.results
     
@@ -817,27 +964,34 @@ class ReadabilityDegradationTester:
         if not self.results:
             return
         
-        # Save averaged results
-        fieldnames = self.results[0].keys()
+        # Combine averaged results with model and generation info
+        enhanced_results = []
+        for result in self.results:
+            enhanced_result = {
+                'model_name': self.model_name,
+                'max_tokens': self.max_tokens,
+                'temperature': self.temperature,
+                'top_k': self.top_k,
+                'top_p': self.top_p,
+                'min_p': self.min_p,
+                'rep_pen': self.rep_pen,
+                **result
+            }
+            enhanced_results.append(enhanced_result)
+        
+        # Save enhanced results
+        fieldnames = enhanced_results[0].keys()
         
         with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            writer.writerows(self.results)
+            writer.writerows(enhanced_results)
         
-        print(f"\n📊 Averaged results saved to: {output_file}")
-        
-        # Save detailed results if multiple rounds
-        if self.num_rounds > 1 and self.detailed_results:
-            detailed_file = output_file.replace('.csv', '_detailed.csv')
-            detailed_fieldnames = self.detailed_results[0].keys()
-            
-            with open(detailed_file, 'w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=detailed_fieldnames)
-                writer.writeheader()
-                writer.writerows(self.detailed_results)
-            
-            print(f"📊 Detailed round-by-round results saved to: {detailed_file}")
+        print(f"\n📊 Results saved to: {output_file}")
+        print(f"   Model: {self.model_name}")
+        print(f"   Rounds: {self.num_rounds}, Divisions: {self.divisions}")
+        print(f"   Generation params: max_tokens={self.max_tokens}, temp={self.temperature}, top_k={self.top_k}")
+        print(f"                     top_p={self.top_p}, min_p={self.min_p}, rep_pen={self.rep_pen}")
 
 
 # ================================
@@ -851,12 +1005,15 @@ def main():
         epilog="""
 Examples:
   python main.py novel.txt --api-url http://localhost:5001
-  python main.py document.pdf --max-context 16384 --output results.csv
+  python main.py document.pdf --max-context 16384 --model-name "MyModel"
   python main.py text.txt --word-list dale_chall_words.txt --rounds 3
-  python main.py novel.txt --rounds 5 --output degradation_test.csv --divisions 2
+  python main.py novel.txt --rounds 5 --divisions 2 --temp 0.8 --top-k 50
+  python main.py text.txt --max-tokens 1024 --rep-pen 1.05 --min-p 0.05
 
 CRITICAL IMPROVEMENT: All continuations now start from the same story position!
 This eliminates confounding variables from different story contexts.
+
+Output files are automatically named based on model and test parameters.
         """
     )
     
@@ -894,19 +1051,62 @@ This eliminates confounding variables from different story contexts.
         '--rounds',
         type=int,
         default=3,
-        help='Number of test rounds per context length (default: 1)'
+        help='Number of test rounds per context length (default: 3)'
     )
     
-    parser.add_argument(
-        '--output',
-        default=None,
-        help='Output CSV file for detailed results'
-    )
     parser.add_argument(
         '--divisions',
         type=int,
         default=1,
         help='Number of context divisions between tiers as a power of 2'
+    )
+    
+    parser.add_argument(
+        '--model-name',
+        default=None,
+        help='Override model name (auto-detected if not provided)'
+    )
+    
+    parser.add_argument(
+        '--max-tokens',
+        type=int,
+        default=512,
+        help='Maximum tokens to generate (default: 512)'
+    )
+    
+    parser.add_argument(
+        '--temp',
+        type=float,
+        default=1.0,
+        help='Generation temperature (default: 1.0)'
+    )
+    
+    parser.add_argument(
+        '--top-k',
+        type=int,
+        default=100,
+        help='Top-k sampling (default: 100)'
+    )
+    
+    parser.add_argument(
+        '--top-p',
+        type=float,
+        default=1.0,
+        help='Top-p sampling (default: 1.0)'
+    )
+    
+    parser.add_argument(
+        '--min-p',
+        type=float,
+        default=0.1,
+        help='Min-p sampling (default: 0.1)'
+    )
+    
+    parser.add_argument(
+        '--rep-pen',
+        type=float,
+        default=1.01,
+        help='Repetition penalty (default: 1.01)'
     )
     args = parser.parse_args()
     
@@ -920,13 +1120,19 @@ This eliminates confounding variables from different story contexts.
             api_password=args.api_password,
             word_list_path=args.word_list,
             num_rounds=args.rounds,
-            divisions=args.divisions
+            divisions=args.divisions,
+            model_name=args.model_name,
+            max_tokens=args.max_tokens,
+            temperature=args.temp,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            min_p=args.min_p,
+            rep_pen=args.rep_pen
         )
         
         tester.run_test(
             file_path=args.input_file,
-            max_context=args.max_context,
-            output_file=args.output
+            max_context=args.max_context
         )
         
     except KeyboardInterrupt:
