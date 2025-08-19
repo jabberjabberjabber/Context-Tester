@@ -248,7 +248,7 @@ class StreamingAPIClient:
         for match in matches:
             chunk = match.group(0)
             chunk_size = self.count_tokens(chunk)
-            if current_size + chunk_size > max_context:
+            if current_size + chunk_size > (max_context * 0.9):
                 if not chunks:
                     chunks.append(chunk)
                 break
@@ -655,7 +655,13 @@ class ReadabilityDegradationTester:
             return {}
         
         if len(round_results) == 1:
-            return round_results[0]
+            result = round_results[0].copy()
+            # Add std fields for single results
+            result['num_rounds'] = 1
+            result['cloze_score_std'] = 0.0
+            result['vocab_diversity_std'] = 0.0
+            result['timestamp'] = datetime.now().isoformat()
+            return result
         
         # Numerical fields to average
         numerical_fields = [
@@ -673,9 +679,11 @@ class ReadabilityDegradationTester:
         
         # Average numerical fields
         for field in numerical_fields:
-            values = [result[field] for result in round_results if field in result]
+            values = [result[field] for result in round_results if field in result and result[field] is not None]
             if values:
                 averaged[field] = round(statistics.mean(values), 4)
+            else:
+                averaged[field] = 0.0
         
         # Recalculate reading level from averaged cloze score
         if 'cloze_score' in averaged:
@@ -683,8 +691,13 @@ class ReadabilityDegradationTester:
         
         # Add round statistics
         averaged['num_rounds'] = len(round_results)
-        averaged['cloze_score_std'] = round(statistics.stdev([r['cloze_score'] for r in round_results]), 3) if len(round_results) > 1 else 0.0
-        averaged['vocab_diversity_std'] = round(statistics.stdev([r['vocabulary_diversity'] for r in round_results]), 4) if len(round_results) > 1 else 0.0
+        
+        # Calculate std deviations safely
+        cloze_values = [r['cloze_score'] for r in round_results if 'cloze_score' in r and r['cloze_score'] is not None]
+        vocab_values = [r['vocabulary_diversity'] for r in round_results if 'vocabulary_diversity' in r and r['vocabulary_diversity'] is not None]
+        
+        averaged['cloze_score_std'] = round(statistics.stdev(cloze_values), 3) if len(cloze_values) > 1 else 0.0
+        averaged['vocab_diversity_std'] = round(statistics.stdev(vocab_values), 4) if len(vocab_values) > 1 else 0.0
         
         # Update timestamp to when averaging was done
         averaged['timestamp'] = datetime.now().isoformat()
@@ -820,32 +833,38 @@ class ReadabilityDegradationTester:
             print(f"  Vocabulary Diversity: {averaged_result['vocabulary_diversity']:5.3f} "
                   f"(±{averaged_result['vocab_diversity_std']:5.3f})")
         
-        # Outlier analysis
+        # Outlier analysis and filtering
         if len(self.detailed_results) >= 4:  # Need minimum data for outlier detection
-            outlier_analysis = analyze_round_outliers(self.detailed_results)
-            if outlier_analysis.get('has_outliers', False):
-                print_outlier_summary(outlier_analysis, max_context)
-                # Filter severe outliers from detailed results for final averaging
-                filtered_results = filter_outliers_from_results(
-                    self.detailed_results, outlier_analysis, exclude_severe_only=True
-                )
-                if len(filtered_results) != len(self.detailed_results):
-                    print(f"\n📊 Filtered {len(self.detailed_results) - len(filtered_results)} severe outlier rounds")
-                    # Recalculate averaged results without severe outliers
-                    context_groups = {}
-                    for result in filtered_results:
-                        ctx_len = result['context_length']
-                        if ctx_len not in context_groups:
-                            context_groups[ctx_len] = []
-                        context_groups[ctx_len].append(result)
-                    
-                    # Rebuild results with filtered data
-                    filtered_averaged_results = []
-                    for ctx_len in sorted(context_groups.keys()):
-                        averaged = self.average_results(context_groups[ctx_len])
-                        filtered_averaged_results.append(averaged)
-                    
-                    self.results = filtered_averaged_results
+            try:
+                outlier_analysis = analyze_round_outliers(self.detailed_results)
+                if outlier_analysis.get('has_outliers', False):
+                    print_outlier_summary(outlier_analysis, max_context)
+                    # Filter severe outliers from detailed results for final averaging
+                    filtered_results = filter_outliers_from_results(
+                        self.detailed_results, outlier_analysis, exclude_severe_only=True
+                    )
+                    if len(filtered_results) != len(self.detailed_results):
+                        print(f"\n📊 Filtered {len(self.detailed_results) - len(filtered_results)} severe outlier rounds")
+                        # Recalculate averaged results without severe outliers
+                        context_groups = {}
+                        for result in filtered_results:
+                            ctx_len = result['context_length']
+                            if ctx_len not in context_groups:
+                                context_groups[ctx_len] = []
+                            context_groups[ctx_len].append(result)
+                        
+                        # Rebuild results with filtered data
+                        filtered_averaged_results = []
+                        for ctx_len in sorted(context_groups.keys()):
+                            if context_groups[ctx_len]:  # Make sure we have data
+                                averaged = self.average_results(context_groups[ctx_len])
+                                filtered_averaged_results.append(averaged)
+                        
+                        if filtered_averaged_results:  # Only update if we got valid results
+                            self.results = filtered_averaged_results
+            except Exception as e:
+                print(f"\n⚠️  Outlier analysis failed: {e}")
+                print("Continuing with original results...")
         
         # Analysis and summary
         self._print_summary()
