@@ -231,31 +231,54 @@ class StreamingAPIClient:
         
             
     def prune_text(self, text: str, max_context: int = 32768):
-        
         """ Get max amount of text that fits into a natural breakpoint
+        
+        Uses binary search over chunk boundaries to find the largest amount
+        of text that fits within max_context tokens when chunked naturally.
         """
         
         total_tokens = self.count_tokens(text)
         if total_tokens < max_context:
+            print(f"Full text ({total_tokens:,} tokens) fits within max context ({max_context:,})")
             return text
 
-        # chunk_regex is designed to break at natural language points
-        # to preserve context and readability
-        matches = chunk_regex.finditer(text)
-        current_size = 0
-        chunks = []
+        print(f"Pruning text from {total_tokens:,} tokens to fit {max_context:,} tokens at natural boundaries...")
         
-        for match in matches:
-            chunk = match.group(0)
-            chunk_size = self.count_tokens(chunk)
-            if current_size + chunk_size > (max_context * 0.9):
-                if not chunks:
-                    chunks.append(chunk)
-                break
-            chunks.append(chunk)
-            current_size += chunk_size
+        # Get all chunk boundaries
+        matches = list(chunk_regex.finditer(text))
+        if not matches:
+            print("Warning: No regex matches found, using character-based truncation")
+            # Fallback: truncate at max_context * 4 characters (rough estimate)
+            return text[:max_context * 4]
         
-        return ''.join(chunks)
+        print(f"Found {len(matches)} natural chunks to work with")
+        
+        # Binary search over chunk boundaries
+        left, right = 0, len(matches)
+        best_text = ""
+        
+        while left < right:
+            mid = (left + right + 1) // 2
+            
+            # Build text up to chunk 'mid'
+            end_pos = matches[mid - 1].end()
+            candidate_text = text[:end_pos]
+            
+            # Count tokens for this candidate
+            candidate_tokens = self.count_tokens(candidate_text)
+            
+            if candidate_tokens <= max_context:
+                best_text = candidate_text
+                left = mid
+                print(f"  Chunk {mid:,}/{len(matches):,}: {candidate_tokens:,} tokens - fits")
+            else:
+                right = mid - 1
+                print(f"  Chunk {mid:,}/{len(matches):,}: {candidate_tokens:,} tokens - too large")
+        
+        final_tokens = self.count_tokens(best_text)
+        print(f"Pruned to {final_tokens:,} tokens ({final_tokens/max_context:.1%} of max context)")
+        
+        return best_text
         
     def tokenize_text_batched(self, text: str, chunk_size: int = 45000) -> List[int]:
         """ Tokenize large text by batching API calls, return token IDs """
@@ -448,7 +471,7 @@ class ReadabilityDegradationTester:
                  word_list_path: str = "easy_words.txt", num_rounds: int = 1, divisions: int = 1,
                  model_name: Optional[str] = None, max_tokens: int = 1024, 
                  temperature: float = 1.0, top_k: int = 100, top_p: float = 1.0, 
-                 min_p: float = 0.1, rep_pen: float = 1.01):
+                 min_p: float = 0.1, rep_pen: float = 1.01, start_context: Optional[int] = None):
         """ Initialize the degradation tester
         
         Args:
@@ -464,6 +487,7 @@ class ReadabilityDegradationTester:
             top_p: Top-p sampling  
             min_p: Min-p sampling
             rep_pen: Repetition penalty
+            start_context: Optional starting context size (skip smaller sizes)
         """
         self.client = StreamingAPIClient(api_url, api_password)
         initialize_word_list(word_list_path)
@@ -473,6 +497,7 @@ class ReadabilityDegradationTester:
         self.divisions = max(1, divisions)
         self.all_tokens = []  # Full tokenized text
         self.working_tokens = []  # Last max_context tokens
+        self.start_context = start_context  # Optional starting context size
         
         # Generation parameters
         self.max_tokens = max_tokens
@@ -498,26 +523,14 @@ class ReadabilityDegradationTester:
         """ Convert fixed-width text and normalize characters """
         content = unicodedata.normalize('NFKC', content)
         content = content.replace('--', '—')
-        paragraphs = content.split('\n\n')
-        reformatted_paragraphs = []
-        
-        for paragraph in paragraphs:
-            # Skip empty paragraphs
-            if not paragraph.strip():
-                continue
+        content = content.replace('“', '"').replace('”', '"').replace("’", "'")
                 
-            # Join lines within paragraph, collapsing artificial line breaks
-            lines = paragraph.strip().split('\n')
-            joined = ' '.join(line.strip() for line in lines if line.strip())
-            
-            # Clean up multiple spaces
-            cleaned = ' '.join(joined.split())
-            
-            if cleaned:
-                reformatted_paragraphs.append(cleaned)
-        
-        # Rejoin with double newlines to preserve paragraph structure
-        return '\n\n'.join(reformatted_paragraphs)
+        text = content.replace('\r\n', '\n').replace('\r', '\n')
+
+        paragraphs = text.split('\n\n')
+        result = '\n\n'.join(para.replace('\n', ' ') for para in paragraphs)
+        result = result.replace('\n\n', '\n\n    ')
+        return result
         
     def load_reference_text(self, file_path: str) -> str:
         """ Load reference text from file """
@@ -613,6 +626,14 @@ class ReadabilityDegradationTester:
             # Fallback for very small max_context
             return [min(1024, max_context)]
         
+        # Filter tiers based on start_context if specified
+        if self.start_context is not None:
+            tiers = [tier for tier in tiers if tier >= self.start_context]
+            if not tiers:
+                # If start_context is larger than all tiers, just use max_context
+                return [min(self.start_context, max_context)]
+            print(f"Starting from context size: {self.start_context:,} tokens")
+        
         # Apply subdivision logic
         context_lengths = [tiers[0]]
         
@@ -636,18 +657,62 @@ class ReadabilityDegradationTester:
             context_length: Number of tokens to include in context
             
         Returns:
-            Context text for this tier
+            Context text for this tier, trimmed to natural boundaries
         """
         if context_length > len(self.working_tokens):
             # Use all available working tokens
             context_tokens = self.working_tokens
-        else:
-            # Take the last context_length tokens from working set
-            context_tokens = self.working_tokens[-context_length:]
+            context_text = self.client.tokens_to_text(context_tokens)
+            return context_text
         
-        # Convert tokens back to text
-        context_text = self.client.tokens_to_text(context_tokens)
-        return context_text
+        # Convert ALL working tokens to text to establish fixed ending position
+        full_text = self.client.tokens_to_text(self.working_tokens)
+        
+        if not full_text:
+            return ""
+        
+        # Find natural chunk boundaries in the full text
+        matches = list(chunk_regex.finditer(full_text))
+        if not matches:
+            # Fallback: just truncate to target length if no regex matches
+            target_tokens = self.working_tokens[-context_length:]
+            fallback_text = self.client.tokens_to_text(target_tokens)
+            print(f"  Context window: {context_length:,} tokens (fallback: no regex matches)")
+            return fallback_text
+        
+        # Find the best starting chunk boundary to get close to target tokens
+        best_text = ""
+        best_token_diff = float('inf')
+        
+        # Try each chunk boundary as a potential starting point
+        for match in matches:
+            start_pos = match.start()
+            candidate_text = full_text[start_pos:]  # From this boundary to end
+            candidate_tokens = self.client.count_tokens(candidate_text)
+            
+            # Calculate how close this is to our target
+            token_diff = abs(candidate_tokens - context_length)
+            
+            # Prefer candidates that are close to target, with slight preference for under-target
+            if candidate_tokens <= context_length:
+                adjusted_diff = token_diff  # No penalty for being under target
+            else:
+                adjusted_diff = token_diff + 100  # Small penalty for being over target
+            
+            if adjusted_diff < best_token_diff:
+                best_text = candidate_text
+                best_token_diff = adjusted_diff
+        
+        if best_text:
+            actual_tokens = self.client.count_tokens(best_text)
+            print(f"  Context window: {actual_tokens:,} tokens (target: {context_length:,}) - starts at natural boundary")
+            return best_text
+        else:
+            # Final fallback
+            target_tokens = self.working_tokens[-context_length:]
+            fallback_text = self.client.tokens_to_text(target_tokens)
+            print(f"  Context window: {context_length:,} tokens (fallback: exact token slice)")
+            return fallback_text
     
     def average_results(self, round_results: List[Dict]) -> Dict[str, Any]:
         """ Average results across multiple rounds """
@@ -1028,6 +1093,7 @@ Examples:
   python main.py text.txt --word-list dale_chall_words.txt --rounds 3
   python main.py novel.txt --rounds 5 --divisions 2 --temp 0.8 --top-k 50
   python main.py text.txt --max-tokens 1024 --rep-pen 1.05 --min-p 0.05
+  python main.py novel.txt --start-context 8192  # Skip testing small contexts
 
 CRITICAL IMPROVEMENT: All continuations now start from the same story position!
 This eliminates confounding variables from different story contexts.
@@ -1127,6 +1193,13 @@ Output files are automatically named based on model and test parameters.
         default=1.01,
         help='Repetition penalty (default: 1.01)'
     )
+    
+    parser.add_argument(
+        '--start-context',
+        type=int,
+        default=None,
+        help='Starting context size in tokens (skip smaller sizes)'
+    )
     args = parser.parse_args()
     
     if not is_power_of_two(args.divisions):
@@ -1146,7 +1219,8 @@ Output files are automatically named based on model and test parameters.
             top_k=args.top_k,
             top_p=args.top_p,
             min_p=args.min_p,
-            rep_pen=args.rep_pen
+            rep_pen=args.rep_pen,
+            start_context=args.start_context
         )
         
         tester.run_test(
