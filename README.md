@@ -1,18 +1,16 @@
 # Context Window Testing
 
-This project utilizes a novel method for evaluated an LLMs ability to utilize different different sized context windows. Instead of checking for recall or correctness, it fills the context with a text and asks the model to continue the text as if it were the original writer. It then evaluates the model's output using basic metrics for readability, including sentence length, estimated grade level, and word variability and complexity.
+This project utilizes a novel method for evaluating an LLMs ability to utilize different different sized context windows. 
+
+Instead of checking for recall or correctness, it fills the context with a text and asks the model to continue the text as if it were the original writer. It then evaluates the model's output using basic metrics for readability, sentence length, and vocabulary diversity.
 
 The purpose is not to provide a benchmark that is definitive, but to provide data points for comparison so that one can see how changes to the model weights and processing effects its creative output across different corpus sizes.
-
-A distinct feature of this test method is the use of a deterministic and static start point for each text and model. Instead of floating through a text going forward by adding tokens to the context window and progressing linearly through the story, the text is pre-tokenized and the largest point in the context window is used as the end of the prompt as sent to the model. The model starts at this spot every time to generate new text, and as tokens are added to increase the context, the earlier parts of the text is used is a reverse linear fashion.
-
-In other words, if we start the test by continuing the story at the beginning of chapter 5, instead of adding tokens and then starting at chapter 6, then chapter 7, and so on, we add chapter 4, then chapter 3, until we reach the beginning. This way we always test from the same origin point. 
 
 ## Overview
 
 This repository contains two primary analysis tools:
 
-1. **Readability Degradation Tester** (`main.py`) - Measures how LLM output quality degrades as context length increases
+1. **Readability Tester** (`main.py`) - Measures how LLM output quality degrades as context length increases
 2. **Performance Comparison Tool** (`generate_plot.py`) - Plots the data on to two graphs
 
 ## Installation
@@ -118,9 +116,9 @@ Notes:
 
 This is pretty simple. They should be flat. Any move up or down means the model is being inconsistent. But here is a breakdown:
 
-**Left hand** graph goes up with the model outputs more diverse sentences and vocabulary. This indicates it is being more creative. It could also indicate it is generating well structured varied gibberish.
+**Left hand** graph goes up when the model outputs more diverse vocabulary. This indicates it is being more creative.
 
-**Right hand** graph goes up when the model outputs more simple words with more predictable text. This indicates that it is degrading by choosing to use words that are less descriptive and more generic.
+**Right hand** graph goes up when the model outputs more simple words and more predictable text. This indicates that it is degrading by choosing to use words that are less descriptive and more generic.
 
 So: **Left hand** indicates *creativity* and **right hand** indicates *degredation*.
 
@@ -145,13 +143,3 @@ The second page of graphs should be self evident.
 **Unfamiliar Words Percentage**: Words not in Dale-Chall easy list
 - Lower percentages indicate simpler vocabulary
 - Sudden increases may signal degradation
-
-### Performance Comparison Metrics
-
-The comparison tool analyzes six key metrics:
-- **Cloze Score**: Text readability quality
-- **Unfamiliar Words**: Vocabulary complexity
-- **Vocabulary Diversity**: Word choice variety  
-- **Continuation Length**: Generated text length
-- **Average Sentence Length**: Sentence structure consistency
-- **Sentence Length Variance**: Structural diversity
