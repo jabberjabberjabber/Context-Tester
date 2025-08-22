@@ -68,7 +68,7 @@ Texts can be any type supported by extractous such as txt or pdf or html. It can
 
 This is pretty simple. They should be relatively flat. Any significant move up or down is an indicator of inconsistency.  
 
-The **left hand** graph shows goes up when the model outputs more diverse vocabulary, while **right hand** graph goes up when the model outputs more simple and predictable text, commonly cause by less descriptive passages and more generic and repetitive word choices.
+The **left hand** graph goes up when the model outputs more diverse vocabulary, while **right hand** graph goes up when the model outputs more simple and predictable text.
 
 The below graphs show this effect:
 
@@ -76,7 +76,7 @@ The below graphs show this effect:
 
 The first plot shows a slight downward slope and then a crash at 16K, while the second one shows an initial lowering of predictability followed by a stead rise. Both plots indicate what looks like a recovery at the end, but this is actually misleading -- when both graphs are taken together you can see that what looks to be an abberant blip at 16K which immediatel rebounds is actually the logical progression as seen by the steady rise of the cloze score on the right. 
 
-Here is an example of a model that can deal with a large context window without losing any creative capability:
+Here is a counter example:
 
 ![Broken tutu](Broken-Tutu-24B.Q6_K-middlemarch.txt-3r1d.png)
 
