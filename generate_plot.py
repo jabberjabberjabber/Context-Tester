@@ -171,7 +171,14 @@ def calculate_axis_ranges(data, dataset_names):
         vocab_min, vocab_max = min(vocab_values), max(vocab_values)
         vocab_range = vocab_max - vocab_min
         vocab_padding = vocab_range * 0.1
-        ranges['vocab_diversity'] = (max(0, vocab_min - vocab_padding), vocab_max + vocab_padding)
+        # Range of 0.50
+        if vocab_range < 0.51:
+            ranges['vocab_diversity'] = (0.20, 0.70)
+        # If the lowest value falls off the graph, set y axis to it
+        else:
+            ranges['vocab_diversity'] = (vocab_min - vocab_padding, vocab_min - vocab_padding + 0.50)
+        #ranges['vocab_diversity'] = (max(0, vocab_min - vocab_padding), vocab_max + vocab_padding)
+    
     else:
         ranges['vocab_diversity'] = (0.20, 0.70)
     
@@ -190,7 +197,13 @@ def calculate_axis_ranges(data, dataset_names):
         cloze_min, cloze_max = min(cloze_values), max(cloze_values)
         cloze_range = cloze_max - cloze_min
         cloze_padding = cloze_range * 0.1
-        ranges['cloze_score'] = (max(0, cloze_min - cloze_padding), cloze_max + cloze_padding)
+        # Range of 25
+        if cloze_range < 26:
+            ranges['cloze_score'] = (15, 40)
+        # Set y axis to be the min value
+        else:
+            ranges['close_score'] = (cloze_min - cloze_padding, cloze_min - cloze_padding + 25)
+        #ranges['cloze_score'] = (max(0, cloze_min - cloze_padding), cloze_max + cloze_padding)
     else:
         ranges['cloze_score'] = (15, 40)
     
