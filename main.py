@@ -27,6 +27,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Literal, TypeAlias
 import requests
 from chunker_regex import chunk_regex
+from find_last_sentence import find_last_sentence_ending
 
 from requests.exceptions import RequestException
 from bs4 import BeautifulSoup
@@ -404,7 +405,8 @@ class StreamingAPIClient:
         """ Generate text continuation from context """
         
         instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
-        print(f"Starting from: {context[-20:]}")
+        context = find_last_sentence_ending(context)
+        print(f"Starting from: {context[-100:]}")
         payload = {
             "messages": [
                 {"role": "system", "content": "You are a skilled novelist continuing a story."},
@@ -523,7 +525,7 @@ class ReadabilityDegradationTester:
         """ Convert fixed-width text and normalize characters """
         content = unicodedata.normalize('NFKC', content)
         content = content.replace('--', '—')
-        content = content.replace('“', '"').replace('”', '"').replace("’", "'")
+        #content = content.replace('“', '"').replace('”', '"').replace("’", "'")
                 
         text = content.replace('\r\n', '\n').replace('\r', '\n')
 
@@ -543,8 +545,8 @@ class ReadabilityDegradationTester:
             # Debug text loading
             if not content or not content.strip():
                 raise ValueError(f"File {file_path} appears to be empty or could not be read")
-            
-            normalized_content = self.normalize_content(content)
+            content_size = int(len(content) * 0.8)
+            normalized_content = self.normalize_content(content[:content_size])
             print(f"Text preview (first 200 chars): {normalized_content[:200]!r}")
             print(f"Total characters: {len(normalized_content):,}")
             
@@ -577,6 +579,7 @@ class ReadabilityDegradationTester:
         print("PREPARING TOKENIZED TEXT")
         print(f"{'='*60}")
         
+        working_size = max_context 
         # Prune the text to a natural breakpoint
         pruned_text = self.client.prune_text(text, max_context)
         
@@ -591,14 +594,14 @@ class ReadabilityDegradationTester:
         print(f"Total tokens in reference text: {total_tokens:,}")
         
         # Check if we have enough tokens for testing
-        min_required = int(max_context * 0.9)
+        min_required = int(max_context * 1.2)
         if total_tokens < min_required:
-            print(f"ERROR: Insufficient text. Need at least {min_required:,} tokens, got {total_tokens:,}")
+            print(f"ERROR: Insufficient text. Need at least {min_required:,} tokens, got {total_tokens:,} after pruning")
             return False
         
         # Take the last max_context tokens as our working set
-        self.working_tokens = self.all_tokens[-max_context:]
-        print(f"Working with last {len(self.working_tokens):,} tokens for testing")
+        self.working_tokens = self.all_tokens[-min_required:]
+        print(f"Working with {len(self.working_tokens):,} tokens for testing")
         
         return True
     
