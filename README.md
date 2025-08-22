@@ -49,7 +49,7 @@ Run data collection:
 uv run main.py crime_english.txt --api-url http://localhost:5001
 ```
 
-Wait for the tests to complete. You should now have a a csv file and two png files in the directory with the name of the model and the text in it containing the data plots.
+Wait for the tests to complete. You should now have a a csv file and a png file in the directory with the name of the model and the text in it containing the data plots.
 
 If you want to compare data for more than one model, run the test for each model and then use generate_plots to run the comparison using the csv files:
 
@@ -61,10 +61,51 @@ You can put as many as you like and it will plot the data for each of them onto 
 ## Input Text
 
 Texts can be any type supported by extractous such as txt or pdf or html. It can be any formatting but better results are obtained if the paragraphs are separated by 2 blank lines and there is now introduction, index, or any other text in it except for the story and chapter headings.
+ 
+## Understanding the Metrics
+
+## Reading the Graphs
+
+This is pretty simple. They should be relatively flat. Any significant move up or down is an indicator of inconsistency.  
+
+The **left hand** graph shows goes up when the model outputs more diverse vocabulary, while **right hand** graph goes up when the model outputs more simple and predictable text, commonly cause by less descriptive passages and more generic and repetitive word choices.
+
+The below graphs show this effect:
+
+![Cohere Aya](Cohere_aya-23-8B-Q6_K-middlemarch.txt-3r1d.png)
+
+The first plot shows a slight downward slope and then a crash at 16K, while the second one shows an initial lowering of predictability followed by a stead rise. Both plots indicate what looks like a recovery at the end, but this is actually misleading -- when both graphs are taken together you can see that what looks to be an abberant blip at 16K which immediatel rebounds is actually the logical progression as seen by the steady rise of the cloze score on the right. 
+
+Here is an example of a model that can deal with a large context window without losing any creative capability:
+
+![Broken tutu](Broken-Tutu-24B.Q6_K-middlemarch.txt-3r1d.png)
+
+This is an ideal result without any large spikes up or down.
+
+Since this test doesn't evaluate coherence, style, accuracy, or instruction following, it should be used as evidence of model capability. A good result could be achieved by the model generating well structured, diverse nonsense. The test is meant as a starting point and as a simple and easily readable indicator of consistency. 
+ 
+### Readability Metrics
+
+**Cloze Score**: Primary readability indicator
+- *LOWER IS BETTER*
+- Range: 10-64 (higher = more readable)
+- Formula: `64 - (95 × pct_unfamiliar_words) - (0.69 × avg_sentence_length)`
+- Based on Dale-Chall readability research
+
+**Vocabulary Diversity**: `unique_words / total_words`
+- Range: 0.0-1.0 (higher = more diverse)
+- Measures repetitiveness and word choice variety
+
+**Sentence Length Variance**: Statistical variance of sentence lengths
+- Higher values indicate more varied sentence structure
+- Lower values suggest repetitive patterns
+
+**Unfamiliar Words Percentage**: Words not in Dale-Chall easy list
+- Lower percentages indicate simpler vocabulary
+- Sudden increases may signal degradation
 
 ## Detailed Usage
 
-### Main Tester
 ```bash
 usage: main.py [-h] [--api-url API_URL] [--api-password API_PASSWORD] [--word-list WORD_LIST] [--max-context MAX_CONTEXT] [--rounds ROUNDS] [--divisions DIVISIONS] [--model-name MODEL_NAME]
                [--max-tokens MAX_TOKENS] [--temp TEMP] [--top-k TOP_K] [--top-p TOP_P] [--min-p MIN_P] [--rep-pen REP_PEN] [--start-context START_CONTEXT]
@@ -113,37 +154,3 @@ Notes:
 **Divisions** allow you to add more datapoints to the normal span of context windows by adding more continuations in between. For example you normally have [1024, 2048], etc as data points; setting divisions to be 1 would give you [1024, a, 2048] where 'a' is an equidistant number of tokens between 1024 and 2048. These tokens will always be a power of two and divisions must also be a power of 2.
     
 **Rounds** are the number of times a test is repeated at each tier. They are averaged out to mitigate the randomness of LLM generations. At least 3 are recommended.
- 
-## Understanding the Metrics
-
-## Reading the Graphs
-
-This is pretty simple. They should be flat. Any move up or down means the model is being inconsistent. But here is a breakdown:
-
-**Left hand** graph goes up when the model outputs more diverse vocabulary. This indicates it is being more creative.
-
-**Right hand** graph goes up when the model outputs more simple words and more predictable text. This indicates that it is degrading by choosing to use words that are less descriptive and more generic.
-
-So: **Left hand** indicates *creativity* and **right hand** indicates *degredation*.
-
-The second page of graphs should be self evident.
- 
-### Readability Metrics
-
-**Cloze Score**: Primary readability indicator
-- *LOWER IS BETTER*
-- Range: 10-64 (higher = more readable)
-- Formula: `64 - (95 × pct_unfamiliar_words) - (0.69 × avg_sentence_length)`
-- Based on Dale-Chall readability research
-
-**Vocabulary Diversity**: `unique_words / total_words`
-- Range: 0.0-1.0 (higher = more diverse)
-- Measures repetitiveness and word choice variety
-
-**Sentence Length Variance**: Statistical variance of sentence lengths
-- Higher values indicate more varied sentence structure
-- Lower values suggest repetitive patterns
-
-**Unfamiliar Words Percentage**: Words not in Dale-Chall easy list
-- Lower percentages indicate simpler vocabulary
-- Sudden increases may signal degradation
