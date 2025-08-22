@@ -15,17 +15,6 @@ This repository contains two primary analysis tools:
 1. **Readability Degradation Tester** (`main.py`) - Measures how LLM output quality degrades as context length increases
 2. **Performance Comparison Tool** (`generate_plot.py`) - Plots the data on to two graphs
 
-## Table of Contents
-
-- [Installation](#installation)
-- [Quick Start](#quick-start)
-- [Tools Overview](#tools-overview)
-- [Detailed Usage](#detailed-usage)
-- [Understanding the Metrics](#understanding-the-metrics)
-- [Output Formats](#output-formats)
-- [Examples](#examples)
-- [Troubleshooting](#troubleshooting)
-
 ## Installation
 
 ### Prerequisites
