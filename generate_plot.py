@@ -530,8 +530,8 @@ def create_detailed_metrics_plots(data, dataset_names, output_file='detailed_met
     # Adjust layout with proper spacing
     plt.subplots_adjust(left=0.06, bottom=0.08, right=0.95, top=0.90, wspace=0.25, hspace=0.3)
     plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
-    if not silent:
-        print(f"Detailed metrics plot saved to: {output_file}")
+    #if not silent:
+        #print(f"Detailed metrics plot saved to: {output_file}")
     plt.close()
 
 def analyze_performance_ranges(data, dataset_names):
@@ -771,7 +771,7 @@ def make_png(enhanced_results, output_file_path, silent=True):
         
         # Create plots
         create_comparison_plots(data, dataset_names, main_plot_file, silent=silent)
-        create_detailed_metrics_plots(data, dataset_names, detailed_plot_file, silent=silent)
+        #create_detailed_metrics_plots(data, dataset_names, detailed_plot_file, silent=silent)
         
         return True
         
@@ -832,7 +832,7 @@ def main():
         if not args.no_plots:
             print("Creating comparison plots...")
             create_comparison_plots(data, dataset_names, main_output_file, args.dpi)
-            create_detailed_metrics_plots(data, dataset_names, detailed_output_file, args.dpi)
+            #create_detailed_metrics_plots(data, dataset_names, detailed_output_file, args.dpi)
         else:
             print("Skipping plots (--no-plots specified)")
         

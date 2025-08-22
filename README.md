@@ -1,11 +1,15 @@
 # Context Window Testing
 
-This project utilizes a novel method for evaluating an LLMs ability to utilize different different sized context windows. 
+This project utilizes a novel method for evaluating an LLMs ability to utilize different different sized context windows.  It is especially concerned with style, creativity and degredation of long form outputs as the amount of tokens fill larger context windows. 
 
-Instead of checking for recall or correctness, it fills the context with a text and asks the model to continue the text as if it were the original writer. It then evaluates the model's output using basic metrics for readability, sentence length, and vocabulary diversity.
+Instead of checking for recall or correctness, the test fills the context with a text and asks the model to continue the text as if it were the original writer. It then evaluates the model's output using basic metrics for readability, sentence length, and vocabulary diversity.
 
 The purpose is not to provide a benchmark that is definitive, but to provide data points for comparison so that one can see how changes to the model weights and processing effects its creative output across different corpus sizes.
 
+Each test using the same parameters with start at the same place in the text each time for the continuation and applies across models. This allows the tests to be repeatable across different sized contexts within the same set of tests as well across different models or fine tune attempts. 
+
+The script finds a natural break point in the text and then cuts out a set of tokens a bit larger than the largest test size. It will them expand the context window by adding new tokens going backwards from the continuation point. In this way the context window expands can expand with minimal effect on the model's creative choices. Any changes in style or creativity is then assumed to be from the larger number of tokens in the window, and not from stylistic choices due to the text changing. All of these operations are determined by using the actual tokens after converting the text using the model's own tokenizer, which allows for granular slicing of the context windows.
+ 
 ## Overview
 
 This repository contains two primary analysis tools:
@@ -19,7 +23,7 @@ This repository contains two primary analysis tools:
 
 - A large text to use as the basis for continuation
 - Python 3.8 or higher
-- A running LLM API server (compatible with OpenAI chat completions format)
+- A running KoboldCpp LLM API server
 
 ### Dependencies
 
@@ -37,7 +41,7 @@ pip install uv
 uv sync
 ```
 
-Ensure you have a running inference instance running an OpenAI endpoint that you can connect to. Ensure that you have a properly formatted creative text such as a novel which has at least enough text in it to max out the tokens you are testing for.  
+Ensure you have a running inference instance running a KoboldCpp endpoint that you can connect to. Ensure that you have a properly formatted creative text such as a novel which has at least enough text in it to max out the tokens you are testing for.  
 
 Run data collection:
 
