@@ -28,7 +28,7 @@ This repository contains two primary analysis tools:
 CLone repo
 
 ```
-git clone https://github.com/jabberjabberjabber/context-tester
+git clone https://github.com/jabberjabberjabber/Context-Tester
 cd context-tester
 ```
 
