@@ -661,11 +661,7 @@ class ReadabilityDegradationTester:
         # Auto-generate filenames and save results
         csv_file = self.generate_output_filename("csv")
         json_file = self.generate_output_filename("json")
-        
-        success = make_png(self.enhanced_results, csv_file)
-        if not success:
-            print("Plot generation failed!")
-        
+
         self._save_results(csv_file)
         self._save_comprehensive_json(json_file)
         
@@ -820,6 +816,10 @@ class ReadabilityDegradationTester:
         
         # Save enhanced results
         fieldnames = enhanced_results[0].keys()
+                
+        success = make_png(enhanced_results, output_file)
+        if not success:
+            print("Plot generation failed!")
         
         with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
