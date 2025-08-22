@@ -663,7 +663,7 @@ class ReadabilityDegradationTester:
         json_file = self.generate_output_filename("json")
 
         self._save_results(csv_file)
-        self._save_comprehensive_json(json_file)
+        #self._save_comprehensive_json(json_file)
         
         return self.results
     
