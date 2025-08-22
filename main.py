@@ -817,10 +817,7 @@ class ReadabilityDegradationTester:
         # Save enhanced results
         fieldnames = enhanced_results[0].keys()
                 
-        success = make_png(enhanced_results, output_file)
-        if not success:
-            print("Plot generation failed!")
-        
+
         with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
@@ -831,7 +828,11 @@ class ReadabilityDegradationTester:
         print(f"   Rounds: {self.num_rounds}, Divisions: {self.divisions}")
         print(f"   Generation params: max_tokens={self.max_tokens}, temp={self.temperature}, top_k={self.top_k}")
         print(f"                     top_p={self.top_p}, min_p={self.min_p}, rep_pen={self.rep_pen}")
-    
+        try:
+            success = make_png(enhanced_results, output_file)
+        except Exception as e:
+            print("Plot generation failed!")
+            
     def _save_comprehensive_json(self, output_file: str):
         """ Save comprehensive data to JSON """
         try:
