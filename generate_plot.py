@@ -11,6 +11,10 @@ Usage:
     python analysis.py rope.csv full_context.csv --output comparison.png
     python analysis.py config1.csv config2.csv config3.csv config4.csv --no-plots
 
+    # From another script:
+    from generate_plot import make_png
+    success = make_png(enhanced_results, output_file_path)
+
 Requirements:
     pip install pandas matplotlib numpy
 """
@@ -20,6 +24,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import argparse
 import os
+import re
 from pathlib import Path
 
 def get_dataset_name(filepath):
@@ -32,6 +37,41 @@ def get_dataset_name(filepath):
         Clean dataset name for use in plots and analysis
     """
     return Path(filepath).stem
+
+def get_base_name(filename):
+    """ Extract base name before first non-alphanumeric character.
+    
+    Args:
+        filename: Filename string
+    
+    Returns:
+        Base name truncated at first non-alphanumeric character
+    """
+    # Remove extension first
+    base = Path(filename).stem
+    # Find first non-alphanumeric character (excluding underscore and hyphen)
+    match = re.search(r'[^a-zA-Z0-9_-]', base)
+    if match:
+        return base[:match.start()]
+    return base
+
+def generate_output_filename(csv_files):
+    """ Generate output PNG filename based on input CSV files.
+    
+    Args:
+        csv_files: List of CSV file paths
+    
+    Returns:
+        Generated PNG filename
+    """
+    if len(csv_files) == 1:
+        return Path(csv_files[0]).stem + '.png'
+    
+    # Multiple files: first_base_with-other1-other2.png
+    first_base = get_base_name(csv_files[0])
+    other_bases = [get_base_name(f) for f in csv_files[1:]]
+    
+    return f"{first_base}_with-{'-'.join(other_bases)}.png"
 
 def load_and_compare_data(csv_files):
     """ Load and merge multiple datasets for comparison.
@@ -81,6 +121,21 @@ def load_and_compare_data(csv_files):
     
     return merged.sort_values('context_length'), dataset_names
 
+def convert_enhanced_results_to_dataframe(enhanced_results, dataset_name):
+    """ Convert enhanced_results list to pandas DataFrame.
+    
+    Args:
+        enhanced_results: List of dictionaries from CSV writer
+        dataset_name: Name for this dataset
+        
+    Returns:
+        DataFrame with the data
+    """
+    df = pd.DataFrame(enhanced_results)
+    # Filter out null context lengths
+    df_clean = df[df['context_length'].notna()].copy()
+    return df_clean
+
 def get_plot_colors_and_markers():
     """ Get distinct colors and markers for up to 6 datasets.
     
@@ -91,7 +146,90 @@ def get_plot_colors_and_markers():
     markers = ['o', 's', '^', 'D', 'v', '<']
     return colors, markers
 
-def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300):
+def calculate_axis_ranges(data, dataset_names):
+    """ Calculate appropriate axis ranges based on actual data.
+    
+    Args:
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
+        
+    Returns:
+        Dictionary with calculated ranges for each metric
+    """
+    ranges = {}
+    
+    # Vocabulary diversity
+    vocab_values = []
+    for dataset in dataset_names:
+        col = f'vocabulary_diversity_{dataset}'
+        if col in data.columns:
+            vals = data[col].dropna()
+            if len(vals) > 0:
+                vocab_values.extend(vals)
+    
+    if vocab_values:
+        vocab_min, vocab_max = min(vocab_values), max(vocab_values)
+        vocab_range = vocab_max - vocab_min
+        vocab_padding = vocab_range * 0.1
+        ranges['vocab_diversity'] = (max(0, vocab_min - vocab_padding), vocab_max + vocab_padding)
+    else:
+        ranges['vocab_diversity'] = (0.20, 0.70)
+    
+    # Sentence length variance
+    
+    # Cloze score
+    cloze_values = []
+    for dataset in dataset_names:
+        col = f'cloze_score_{dataset}'
+        if col in data.columns:
+            vals = data[col].dropna()
+            if len(vals) > 0:
+                cloze_values.extend(vals)
+    
+    if cloze_values:
+        cloze_min, cloze_max = min(cloze_values), max(cloze_values)
+        cloze_range = cloze_max - cloze_min
+        cloze_padding = cloze_range * 0.1
+        ranges['cloze_score'] = (max(0, cloze_min - cloze_padding), cloze_max + cloze_padding)
+    else:
+        ranges['cloze_score'] = (15, 40)
+    
+    # Calculate penalty range based on actual data
+    ranges['sentence_penalty'] = (0, 2.0)  # Keep fixed for consistency
+    
+    return ranges
+
+def align_twin_axis(primary_range, secondary_range, primary_values, secondary_values):
+    """ Calculate aligned secondary axis range to match primary axis positioning.
+    
+    Args:
+        primary_range: (min, max) for primary axis
+        secondary_range: (min, max) for secondary axis  
+        primary_values: List of primary axis values
+        secondary_values: List of secondary axis values
+        
+    Returns:
+        Adjusted secondary range (min, max)
+    """
+    if not primary_values or not secondary_values:
+        return secondary_range
+    
+    # Find middle points of actual data
+    primary_mid = (min(primary_values) + max(primary_values)) / 2
+    secondary_mid = (min(secondary_values) + max(secondary_values)) / 2
+    
+    # Calculate where the primary middle falls in its range (0-1)
+    primary_span = primary_range[1] - primary_range[0]
+    primary_position = (primary_mid - primary_range[0]) / primary_span if primary_span > 0 else 0.5
+    
+    # Calculate secondary range to position its middle at same relative position
+    secondary_span = secondary_range[1] - secondary_range[0]
+    target_secondary_min = secondary_mid - (primary_position * secondary_span)
+    target_secondary_max = target_secondary_min + secondary_span
+    
+    return (target_secondary_min, target_secondary_max)
+
+def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300, silent=False):
     """ Create adaptive baseline comparison plots for multiple datasets.
     
     Creates two plots:
@@ -103,62 +241,72 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
         dataset_names: List of dataset names
         output_file: Path for output PNG file
         dpi: Resolution for output image
+        silent: If True, suppress print statements
     """
     # Set backend to Agg for headless operation
     import matplotlib
     matplotlib.use('Agg')
+    
+    # Calculate dynamic ranges
+    ranges = calculate_axis_ranges(data, dataset_names)
     
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
     fig.suptitle('Model Performance Analysis: Creativity vs Degradation', fontsize=16, fontweight='bold')
     
     colors, markers = get_plot_colors_and_markers()
     
-    # Fixed y-axis ranges for consistent cross-comparison
-    VOCAB_DIVERSITY_RANGE = (0.20, 0.70)
-    SENTENCE_VARIANCE_RANGE = (20, 200)
-    CLOZE_SCORE_RANGE = (15, 40)
-    SENTENCE_PENALTY_RANGE = (0, 2.0)  # Log penalty range
-    
     # Plot 1: Creativity Metrics
     ax1 = axes[0]
-    ax1_twin = ax1.twinx()
+    #ax1_twin = ax1.twinx()
+    
+    # Collect values for axis alignment
+    vocab_plot_values = []
+    variance_plot_values = []
     
     for j, dataset_name in enumerate(dataset_names):
         vocab_col = f'vocabulary_diversity_{dataset_name}'
-        variance_col = f'sentence_length_variance_{dataset_name}'
+        #variance_col = f'sentence_length_variance_{dataset_name}'
         
         if vocab_col in data.columns:
             mask = data[vocab_col].notna() & data['context_length'].notna()
             if mask.any():
-                ax1.plot(data.loc[mask, 'context_length'], data.loc[mask, vocab_col], 
+                values = data.loc[mask, vocab_col].tolist()
+                vocab_plot_values.extend(values)
+                ax1.plot(data.loc[mask, 'context_length'], values, 
                         marker=markers[j % len(markers)], color=colors[j % len(colors)],
                         linewidth=3, markersize=6, label=f'{dataset_name} (vocab)', linestyle='-')
         
-        if variance_col in data.columns:
-            mask = data[variance_col].notna() & data['context_length'].notna()
-            if mask.any():
-                ax1_twin.plot(data.loc[mask, 'context_length'], data.loc[mask, variance_col], 
-                             marker=markers[j % len(markers)], color=colors[j % len(colors)],
-                             linewidth=3, markersize=6, label=f'{dataset_name} (variance)', linestyle='--', alpha=0.7)
+     
     
+    # Set primary axis
     ax1.set_xscale('log')
     ax1.set_xlabel('Context Length')
     ax1.set_ylabel('Vocabulary Diversity', color='black')
     ax1.set_title('Creativity Metrics', fontweight='bold')
-    ax1.set_ylim(VOCAB_DIVERSITY_RANGE)
+    ax1.set_ylim(ranges['vocab_diversity'])
     ax1.grid(True, alpha=0.3)
     
-    ax1_twin.set_ylabel('Sentence Length Variance', color='gray')
-    ax1_twin.set_ylim(SENTENCE_VARIANCE_RANGE)
+    # Align twin axis
+    #aligned_variance_range = align_twin_axis(
+    #    ranges['vocab_diversity'], ranges['sentence_variance'],
+    #    vocab_plot_values, variance_plot_values
+    #)
+    
+    #ax1_twin.set_ylabel('Sentence Length Variance', color='gray')
+    #ax1_twin.set_ylim(aligned_variance_range)
     
     # Combined legend
     lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax1_twin.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='best')
-    
+    #lines2, labels2 = ax1_twin.get_legend_handles_labels()
+    #ax1.legend(lines1 + lines2, labels1 + labels2, loc='best')
+    ax1.legend(lines1, labels1, loc='best')
     # Plot 2: Degradation Metrics (with adaptive baseline)
     ax2 = axes[1]
-    ax2_twin = ax2.twinx()
+    #ax2_twin = ax2.twinx()
+    
+    # Collect values for axis alignment
+    cloze_plot_values = []
+    penalty_plot_values = []
     
     for j, dataset_name in enumerate(dataset_names):
         cloze_col = f'cloze_score_{dataset_name}'
@@ -168,42 +316,35 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
         if cloze_col in data.columns:
             mask = data[cloze_col].notna() & data['context_length'].notna()
             if mask.any():
-                ax2.plot(data.loc[mask, 'context_length'], data.loc[mask, cloze_col], 
+                values = data.loc[mask, cloze_col].tolist()
+                cloze_plot_values.extend(values)
+                ax2.plot(data.loc[mask, 'context_length'], values, 
                         marker=markers[j % len(markers)], color=colors[j % len(colors)],
                         linewidth=3, markersize=6, label=f'{dataset_name} (cloze)', linestyle='-')
         
-        # Calculate adaptive sentence penalty
-        if sentence_col in data.columns and cloze_col in data.columns:
-            # Find optimal point (minimum cloze score)
-            dataset_data = data[[cloze_col, sentence_col, 'context_length']].dropna()
-            if len(dataset_data) > 0:
-                optimal_idx = dataset_data[cloze_col].idxmin()
-                baseline_sentence_length = dataset_data.loc[optimal_idx, sentence_col]
-                
-                # Calculate log penalty for deviations from baseline
-                sentence_penalty = np.log(np.maximum(baseline_sentence_length / dataset_data[sentence_col], 0.1))
-                sentence_penalty = np.clip(sentence_penalty, 0, SENTENCE_PENALTY_RANGE[1])
-                
-                ax2_twin.plot(dataset_data['context_length'], sentence_penalty, 
-                             marker=markers[j % len(markers)], color=colors[j % len(colors)],
-                             linewidth=3, markersize=6, label=f'{dataset_name} (sent penalty)', 
-                             linestyle='--', alpha=0.7)
-    
+        
+    # Set primary axis
     ax2.set_xscale('log')
     ax2.set_xlabel('Context Length')
     ax2.set_ylabel('Cloze Score (Predictability)', color='black')
     ax2.set_title('Degradation Metrics', fontweight='bold')
-    ax2.set_ylim(CLOZE_SCORE_RANGE)
+    ax2.set_ylim(ranges['cloze_score'])
     ax2.grid(True, alpha=0.3)
     
-    ax2_twin.set_ylabel('Sentence Length Penalty (Log)', color='gray')
-    ax2_twin.set_ylim(SENTENCE_PENALTY_RANGE)
+    # Align twin axis
+    aligned_penalty_range = align_twin_axis(
+        ranges['cloze_score'], ranges['sentence_penalty'],
+        cloze_plot_values, penalty_plot_values
+    )
+    
+    #ax2_twin.set_ylabel('Sentence Length Penalty (Log)', color='gray')
+    #ax2_twin.set_ylim(aligned_penalty_range)
     
     # Combined legend
     lines3, labels3 = ax2.get_legend_handles_labels()
-    lines4, labels4 = ax2_twin.get_legend_handles_labels()
-    ax2.legend(lines3 + lines4, labels3 + labels4, loc='best')
-    
+    #lines4, labels4 = ax2_twin.get_legend_handles_labels()
+    #ax2.legend(lines3 + lines4, labels3 + labels4, loc='best')
+    ax2.legend(lines3, labels3, loc='best')
     # Format x-axis labels for both plots
     for ax in [ax1, ax2]:
         if len(data['context_length'].dropna()) > 0:
@@ -214,7 +355,170 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     
     plt.tight_layout()
     plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
-    print(f"Plot saved to: {output_file}")
+    if not silent:
+        print(f"Plot saved to: {output_file}")
+    plt.close()
+
+def create_detailed_metrics_plots(data, dataset_names, output_file='detailed_metrics.png', dpi=300, silent=False):
+    """ Create detailed metrics plots for additional analysis.
+    
+    Creates four plots:
+    a) continuation_length (log scale)
+    b) density metrics (linear scale) 
+    c) ratio metrics (log scale 0-1)
+    d) avg_word_length (linear scale)
+    
+    Args:
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
+        output_file: Path for output PNG file
+        dpi: Resolution for output image
+        silent: If True, suppress print statements
+    """
+    # Set backend to Agg for headless operation
+    import matplotlib
+    matplotlib.use('Agg')
+    
+    fig, axes = plt.subplots(2, 2, figsize=(17.5, 14))
+    fig.suptitle('Detailed Metrics Analysis', fontsize=16, fontweight='bold', y=0.95)
+    
+    colors, markers = get_plot_colors_and_markers()
+    
+    # Plot A: Continuation Length (log scale)
+    ax_a = axes[0, 0]
+    continuation_values = []
+    
+    for j, dataset_name in enumerate(dataset_names):
+        cont_col = f'continuation_length_{dataset_name}'
+        if cont_col in data.columns:
+            mask = data[cont_col].notna() & data['context_length'].notna()
+            if mask.any():
+                values = data.loc[mask, cont_col]
+                continuation_values.extend(values.tolist())
+                ax_a.plot(data.loc[mask, 'context_length'], values,
+                         marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                         linewidth=3, markersize=6, label=dataset_name)
+    
+    ax_a.set_xscale('log')
+    ax_a.set_yscale('log')
+    ax_a.set_xlabel('Context Length')
+    ax_a.set_ylabel('Continuation Length (log scale)')
+    ax_a.set_title('Continuation Length')
+    ax_a.grid(True, alpha=0.3)
+    ax_a.legend(loc='best', fontsize=8)
+    
+    # Set y-range for continuation length
+    if continuation_values:
+        min_cont, max_cont = min(continuation_values), max(continuation_values)
+        ax_a.set_ylim(max(1, min_cont * 0.8), max_cont * 1.2)
+    
+    # Plot B: Density Metrics (linear scale)
+    ax_b = axes[0, 1]
+    density_metrics = ['comma_density', 'semicolon_density', 'question_density', 'exclamation_density']
+    all_density_values = []
+    
+    for metric in density_metrics:
+        for j, dataset_name in enumerate(dataset_names):
+            col = f'{metric}_{dataset_name}'
+            if col in data.columns:
+                mask = data[col].notna() & data['context_length'].notna()
+                if mask.any():
+                    values = data.loc[mask, col]
+                    all_density_values.extend(values.tolist())
+                    linestyle = ['-', '--', '-.', ':'][density_metrics.index(metric)]
+                    ax_b.plot(data.loc[mask, 'context_length'], values,
+                             marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                             linewidth=2, markersize=4, 
+                             label=f'{dataset_name} ({metric.replace("_density", "")})',
+                             linestyle=linestyle)
+    
+    ax_b.set_xscale('log')
+    ax_b.set_xlabel('Context Length')
+    ax_b.set_ylabel('Density')
+    ax_b.set_title('Punctuation Densities')
+    ax_b.grid(True, alpha=0.3)
+    
+    # Set y-range for density
+    if all_density_values:
+        max_density = max(all_density_values)
+        ax_b.set_ylim(0, max_density * 1.1)
+    
+    # Plot C: Ratio Metrics (log scale 0-1)
+    ax_c = axes[1, 0]
+    ratio_metrics = ['function_word_ratio', 'unique_word_ratio_100', 'long_word_ratio']
+    
+    for metric in ratio_metrics:
+        for j, dataset_name in enumerate(dataset_names):
+            col = f'{metric}_{dataset_name}'
+            if col in data.columns:
+                mask = data[col].notna() & data['context_length'].notna()
+                if mask.any():
+                    values = data.loc[mask, col]
+                    linestyle = ['-', '--', '-.'][ratio_metrics.index(metric)]
+                    ax_c.plot(data.loc[mask, 'context_length'], values,
+                             marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                             linewidth=2, markersize=4,
+                             label=f'{dataset_name} ({metric.replace("_ratio", "").replace("_", " ")})',
+                             linestyle=linestyle)
+    
+    ax_c.set_xscale('log')
+    ax_c.set_yscale('log')
+    ax_c.set_xlabel('Context Length')
+    ax_c.set_ylabel('Ratio (log scale)')
+    ax_c.set_title('Word Ratios')
+    ax_c.set_ylim(0.001, 1)
+    ax_c.grid(True, alpha=0.3)
+    
+    # Plot D: Average Word Length (linear scale)
+    ax_d = axes[1, 1]
+    word_length_values = []
+    
+    for j, dataset_name in enumerate(dataset_names):
+        wl_col = f'avg_word_length_{dataset_name}'
+        if wl_col in data.columns:
+            mask = data[wl_col].notna() & data['context_length'].notna()
+            if mask.any():
+                values = data.loc[mask, wl_col]
+                word_length_values.extend(values.tolist())
+                ax_d.plot(data.loc[mask, 'context_length'], values,
+                         marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                         linewidth=3, markersize=6, label=dataset_name)
+    
+    ax_d.set_xscale('log')
+    ax_d.set_xlabel('Context Length')
+    ax_d.set_ylabel('Average Word Length')
+    ax_d.set_title('Average Word Length')
+    ax_d.grid(True, alpha=0.3)
+    ax_d.legend(loc='best', fontsize=8)
+    
+    # Set y-range for word length
+    if word_length_values:
+        min_wl, max_wl = min(word_length_values), max(word_length_values)
+        wl_range = max_wl - min_wl
+        padding = wl_range * 0.1
+        ax_d.set_ylim(min_wl - padding, max_wl + padding)
+    
+    # Format x-axis labels for all plots
+    for ax in [ax_a, ax_b, ax_c, ax_d]:
+        if len(data['context_length'].dropna()) > 0:
+            unique_contexts = sorted(data['context_length'].dropna().unique())
+            ax.set_xticks(unique_contexts)
+            ax.set_xticklabels([f'{int(x/1000)}K' if x >= 1000 else str(int(x)) 
+                               for x in unique_contexts])
+    
+    # Add legends for plots B and C (which have multiple series per dataset)
+    ax_b.legend(loc='upper right', fontsize=8)
+    ax_c.legend(loc='upper right', fontsize=8)
+    
+    # Set equal aspect ratio for all subplots to make them more square
+    for ax in [ax_a, ax_b, ax_c, ax_d]:
+        ax.set_aspect('auto')
+    
+    # Adjust layout with proper spacing
+    plt.subplots_adjust(left=0.06, bottom=0.08, right=0.95, top=0.90, wspace=0.25, hspace=0.3)
+    plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+    if not silent:
+        print(f"Detailed metrics plot saved to: {output_file}")
     plt.close()
 
 def analyze_performance_ranges(data, dataset_names):
@@ -329,7 +633,7 @@ def create_summary_analysis(data, dataset_names):
     # Overall creativity averages
     print("CREATIVITY PERFORMANCE AVERAGES:")
     
-    creativity_metrics = ['vocabulary_diversity', 'sentence_length_variance']
+    creativity_metrics = ['vocabulary_diversity']
     
     for metric in creativity_metrics:
         print(f"\n  {metric.replace('_', ' ').title()}:")
@@ -365,25 +669,23 @@ def create_summary_analysis(data, dataset_names):
     for dataset in dataset_names:
         cloze_col = f'cloze_score_{dataset}'
         vocab_col = f'vocabulary_diversity_{dataset}'
-        variance_col = f'sentence_length_variance_{dataset}'
+        #variance_col = f'sentence_length_variance_{dataset}'
         
         if cloze_col in data.columns and not data[cloze_col].isna().all():
             # Find the optimal point (minimum cloze score)
-            dataset_data = data[[cloze_col, 'context_length', vocab_col, variance_col]].dropna()
+            dataset_data = data[[cloze_col, 'context_length', vocab_col]].dropna()
             if len(dataset_data) > 0:
                 optimal_idx = dataset_data[cloze_col].idxmin()
                 optimal_ctx = dataset_data.loc[optimal_idx, 'context_length']
                 optimal_cloze = dataset_data.loc[optimal_idx, cloze_col]
                 optimal_vocab = dataset_data.loc[optimal_idx, vocab_col] if vocab_col in dataset_data.columns else None
-                optimal_variance = dataset_data.loc[optimal_idx, variance_col] if variance_col in dataset_data.columns else None
                 
                 print(f"  {dataset}:")
                 print(f"    Optimal context: {int(optimal_ctx):,}")
                 print(f"    Cloze score: {optimal_cloze:.3f}")
                 if optimal_vocab is not None:
                     print(f"    Vocab diversity: {optimal_vocab:.3f}")
-                if optimal_variance is not None:
-                    print(f"    Sentence variance: {optimal_variance:.1f}")
+
     
     # Degradation patterns
     print(f"\nDEGRADATION PATTERNS:")
@@ -417,6 +719,53 @@ def create_summary_analysis(data, dataset_names):
                         print(f"      Cloze change: {cloze_change:+.3f} ({'worse' if cloze_change > 0 else 'better'})")
                         print(f"      Vocab change: {vocab_change:+.3f} ({'worse' if vocab_change < 0 else 'better'})")
 
+def make_png(enhanced_results, output_file_path, silent=True):
+    """ Generate PNG plots from enhanced_results data.
+    
+    Args:
+        enhanced_results: List of dictionaries from CSV writer
+        output_file_path: Path where CSV would be written (used to derive PNG names)
+        silent: If True, suppress most output
+        
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Convert enhanced_results to expected format
+        base_output_path = Path(output_file_path).stem
+        dataset_name = get_dataset_name(output_file_path)
+        
+        # Convert to DataFrame
+        df = convert_enhanced_results_to_dataframe(enhanced_results, dataset_name)
+        
+        if len(df) == 0:
+            if not silent:
+                print("Error: No valid data found")
+            return False
+        
+        # Generate output filenames
+        main_plot_file = f"{base_output_path}.png"
+        detailed_plot_file = f"{base_output_path}_detailed.png"
+        
+        # Create single-dataset merged format expected by plotting functions
+        data = df.copy()
+        dataset_names = [dataset_name]
+        
+        # Rename columns to match expected format
+        columns_to_rename = [col for col in data.columns if col != 'context_length']
+        for col in columns_to_rename:
+            data = data.rename(columns={col: f"{col}_{dataset_name}"})
+        
+        # Create plots
+        create_comparison_plots(data, dataset_names, main_plot_file, silent=silent)
+        create_detailed_metrics_plots(data, dataset_names, detailed_plot_file, silent=silent)
+        
+        return True
+        
+    except Exception as e:
+        if not silent:
+            print(f"Error creating plots: {e}")
+        return False
 
 def parse_arguments():
     """ Parse command line arguments for multiple CSV file inputs.
@@ -433,8 +782,6 @@ def parse_arguments():
                        help='Path(s) to CSV files (1-6 files supported)')
     parser.add_argument('--no-plots', action='store_true',
                        help='Skip generating plots (useful for headless environments)')
-    parser.add_argument('--output', '-o', default='comparison.png',
-                       help='Output PNG filename (default: comparison.png)')
     parser.add_argument('--dpi', type=int, default=300,
                        help='Output image DPI (default: 300)')
     
@@ -455,6 +802,10 @@ def main():
         return
     
     try:
+        # Generate output filename automatically
+        main_output_file = generate_output_filename(args.csv_files)
+        detailed_output_file = main_output_file.replace('.png', '_detailed.png')
+        
         # Load and merge data
         print(f"Loading data from {len(args.csv_files)} file(s)...")
         for i, f in enumerate(args.csv_files, 1):
@@ -467,7 +818,8 @@ def main():
         # Create visualizations (unless disabled)
         if not args.no_plots:
             print("Creating comparison plots...")
-            create_comparison_plots(data, dataset_names, args.output, args.dpi)
+            create_comparison_plots(data, dataset_names, main_output_file, args.dpi)
+            create_detailed_metrics_plots(data, dataset_names, detailed_output_file, args.dpi)
         else:
             print("Skipping plots (--no-plots specified)")
         

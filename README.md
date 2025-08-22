@@ -13,7 +13,7 @@ In other words, if we start the test by continuing the story at the beginning of
 This repository contains two primary analysis tools:
 
 1. **Readability Degradation Tester** (`main.py`) - Measures how LLM output quality degrades as context length increases
-2. **Performance Comparison Tool** (`generate_plot.py`) - Compares ROPE vs full context configurations across multiple metrics
+2. **Performance Comparison Tool** (`generate_plot.py`) - Plots the data on to two graphs
 
 ## Table of Contents
 
@@ -36,99 +36,107 @@ This repository contains two primary analysis tools:
 
 ### Dependencies
 
-Install required packages:
+CLone repo
 
-```bash
-pip install pandas matplotlib numpy requests beautifulsoup4 extractous
+```
+git clone https://github.com/jabberjabberjabber/context-tester
+cd context-tester
 ```
 
-## Quick Start
-
-### Testing Readability Degradation
+Install UV and sync:
 
 ```bash
-# Basic test with a novel or long text
-python main.py novel.txt --api-url http://localhost:5001
-
-# Multi-round testing for statistical reliability
-python main.py document.pdf --rounds 5 --output degradation_results.csv
-
-# Custom context limits
-python main.py text.txt --max-context 16384 --rounds 3 -divisions 2
+pip install uv
+uv sync
 ```
 
-### Comparing ROPE vs Full Context
+Ensure you have a running inference instance running an OpenAI endpoint that you can connect to. Ensure that you have a properly formatted creative text such as a novel which has at least enough text in it to max out the tokens you are testing for.  
 
-```bash
-# Generate comparison plots
-python generate_plot.py rope_results.csv full_context_results.csv
+Run data collection:
 
-# Custom output and analysis only
-python generate_plot.py rope_data.csv full_context_data.csv --output comparison.png --no-plots
+```
+uv run main.py crime_english.txt --api-url http://localhost:5001
 ```
 
-## Tools Overview
+Wait for the tests to complete. You should now have a a csv file and two png files in the directory with the name of the model and the text in it containing the data plots.
 
-### Readability Degradation Tester (`main.py`)
+If you want to compare data for more than one model, run the test for each model and then use generate_plots to run the comparison using the csv files:
 
-**Purpose**: Identifies at what context lengths LLM output quality begins to degrade by measuring readability complexity.
+```
+uv run generate_plots.py name-of-first-csv-file.csv name-of-second-csv-file.csv 
+```
+You can put as many as you like and it will plot the data for each of them onto the same graphs.
 
-**Key Features**:
-- Tests multiple context lengths (powers of 2: 1K, 2K, 4K, 8K, 16K, 32K+)
-- Intermediary tiers with divisions
-- Multi-round testing with statistical averaging
-- Support for any text format via extractous
+## Input Text
 
-### Performance Comparison Tool (`generate_plot.py`)
-
-**Key Features**:
-- Comprehensive metric comparison across context lengths
-- Statistical analysis and winner identification
-- High-quality visualization generation
-- Performance range analysis
-- Summary insights and recommendations
+Texts can be any type supported by extractous such as txt or pdf or html. It can be any formatting but better results are obtained if the paragraphs are separated by 2 blank lines and there is now introduction, index, or any other text in it except for the story and chapter headings.
 
 ## Detailed Usage
 
+### Main Tester
 ```bash
-python main.py [text] [options]
+usage: main.py [-h] [--api-url API_URL] [--api-password API_PASSWORD] [--word-list WORD_LIST] [--max-context MAX_CONTEXT] [--rounds ROUNDS] [--divisions DIVISIONS] [--model-name MODEL_NAME]
+               [--max-tokens MAX_TOKENS] [--temp TEMP] [--top-k TOP_K] [--top-p TOP_P] [--min-p MIN_P] [--rep-pen REP_PEN] [--start-context START_CONTEXT]
+               input_file
+
+Test LLM readability degradation across context lengths with fixed continuation point
+
+positional arguments:
+  input_file            Path to reference text file (any format supported by extractous)
+
+options:
+  -h, --help            show this help message and exit
+  --api-url API_URL     API URL for the LLM service
+  --api-password API_PASSWORD
+                        API key/password if required
+  --word-list WORD_LIST
+                        Path to Dale-Chall easy words list
+  --max-context MAX_CONTEXT
+                        Maximum context length to test (auto-detect if not specified)
+  --rounds ROUNDS       Number of test rounds per context length (default: 3)
+  --divisions DIVISIONS
+                        Number of context divisions between tiers as a power of 2
+  --model-name MODEL_NAME
+                        Override model name (auto-detected if not provided)
+  --max-tokens MAX_TOKENS
+                        Maximum tokens to generate (default: 512)
+  --temp TEMP           Generation temperature (default: 1.0)
+  --top-k TOP_K         Top-k sampling (default: 100)
+  --top-p TOP_P         Top-p sampling (default: 1.0)
+  --min-p MIN_P         Min-p sampling (default: 0.1)
+  --rep-pen REP_PEN     Repetition penalty (default: 1.01)
+  --start-context START_CONTEXT
+                        Starting context size in tokens (skip smaller sizes)
+
+Examples:
+  python main.py novel.txt --api-url http://localhost:5001
+  python main.py document.pdf --max-context 16384 --model-name "MyModel"
+  python main.py text.txt --word-list dale_chall_words.txt --rounds 3
+  python main.py novel.txt --rounds 5 --divisions 2 --temp 0.8 --top-k 50
+  python main.py text.txt --max-tokens 1024 --rep-pen 1.05 --min-p 0.05
+  python main.py novel.txt --start-context 8192  # Skip testing small contexts
 ```
 
-**Arguments**:
-- `text`: Path to a long creative text that the model can continue any part of (supports PDF, DOCX, TXT, etc.)
+Notes:
 
-**Options**:
-- `--api-url`: Koboldcpp API endpoint (default: `http://localhost:5001`)
-- `--api-password`: API authentication key
-- `--word-list`: Path to Dale-Chall word list (default: `easy_words.txt`)
-- `--max-context`: Maximum context length to test (auto-detected)
-- `--rounds`: Number of test rounds per context length (default: 3)
-- `--divisions`: Split the power of two context tiers into this many parts to create more test datapoints
-- `--output`: CSV output file path (required if plotting a graph)
-
-**Multi-Round Testing**:
-Running multiple rounds per context length provides statistical reliability:
-- Reduces impact of generation randomness
-- Provides standard deviation metrics
-- Enables confidence interval analysis
-- Recommended: 3-15 rounds for production analysis
-
-### Performance Comparison Tool
-
-```bash
-python generate_plot.py [csv-file] [csv-file] [...] [options]
-```
-
-**Arguments**:
-- `csv_file`: Any a CSV file output by the main script containing single datapoints per context window (not the detailed file) 
-
-**Options**:
-- `--output`: Output PNG filename (default: `comparison.png`)
-- `--no-plots`: Skip plot generation (analysis only)
-- `--dpi`: Output image resolution (default: 300)
-
+**Divisions** allow you to add more datapoints to the normal span of context windows by adding more continuations in between. For example you normally have [1024, 2048], etc as data points; setting divisions to be 1 would give you [1024, a, 2048] where 'a' is an equidistant number of tokens between 1024 and 2048. These tokens will always be a power of two and divisions must also be a power of 2.
+    
+**Rounds** are the number of times a test is repeated at each tier. They are averaged out to mitigate the randomness of LLM generations. At least 3 are recommended.
+ 
 ## Understanding the Metrics
 
+## Reading the Graphs
+
+This is pretty simple. They should be flat. Any move up or down means the model is being inconsistent. But here is a breakdown:
+
+**Left hand** graph goes up with the model outputs more diverse sentences and vocabulary. This indicates it is being more creative. It could also indicate it is generating well structured varied gibberish.
+
+**Right hand** graph goes up when the model outputs more simple words with more predictable text. This indicates that it is degrading by choosing to use words that are less descriptive and more generic.
+
+So: **Left hand** indicates *creativity* and **right hand** indicates *degredation*.
+
+The second page of graphs should be self evident.
+ 
 ### Readability Metrics
 
 **Cloze Score**: Primary readability indicator

@@ -21,446 +21,36 @@ import warnings
 import csv
 import statistics
 import unicodedata
-
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Literal, TypeAlias
+import os
+
 import requests
+from readability_tests import (
+    initialize_word_list, 
+    analyze_text_comprehensive, 
+    analyze_text_readability,
+    reading_level_from_cloze,
+    is_power_of_two
+)
+
+from generate_plot import make_png
 from chunker_regex import chunk_regex
 from find_last_sentence import find_last_sentence_ending
 
 from requests.exceptions import RequestException
 from bs4 import BeautifulSoup
 from extractous import Extractor
+from streaming_api import StreamingAPIClient
 
-# Outlier detection functionality
 from outlier_detection import (
     analyze_round_outliers, 
     filter_outliers_from_results,
     print_outlier_summary
 )
 
-# Suppress BeautifulSoup warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="bs4")
-
-
-# ================================
-# READABILITY ANALYSIS COMPONENTS
-# ================================
-
-def load_easy_words(word_list_path: str = "easy_words.txt") -> Set[str]:
-    """ Load the Dale-Chall easy words list from file """
-    try:
-        with open(word_list_path, 'r', encoding='utf-8') as f:
-            return {line.strip().lower() for line in f if line.strip()}
-    except FileNotFoundError:
-        print(f"ERROR: Could not find {word_list_path}")
-        print("Please ensure the Dale-Chall word list file exists.")
-        raise
-
-EASY_WORDS: Set[str] = set()
-
-def initialize_word_list(word_list_path: str = "easy_words.txt") -> None:
-    """ Initialize the global easy words list """
-    global EASY_WORDS
-    EASY_WORDS = load_easy_words(word_list_path)
-
-def compute_cloze_score(pct_unfamiliar_words: float, avg_sentence_length: float) -> float:
-    """ Compute the Cloze score (Chall & Dale, 1995)
-    
-    Formula: 64 - (95 × pct_unfamiliar_words) - (0.69 × avg_sentence_length)
-    """
-    raw_result = 64 - (95 * pct_unfamiliar_words) - (0.69 * avg_sentence_length)
-    return round(raw_result, 2)
-
-ReadingLevel: TypeAlias = Literal[
-    "1", "2", "3", "4", "5-6", "7-8", "9-10", "11-12", "13-15", "16+"
-]
-
-class RangeDict(dict[range, ReadingLevel]):
-    """ Maps cloze score ranges to reading levels """
-    def __getitem__(self, item: Any) -> ReadingLevel:
-        int_item = math.ceil(item)
-        for key in self.keys():
-            if int_item in key:
-                return super().__getitem__(key)
-        raise KeyError(item)
-
-EQUIV_CLOZE_AND_READING_LEVELS = RangeDict({
-    range(58, 65): "1",
-    range(54, 58): "2", 
-    range(50, 54): "3",
-    range(45, 50): "4",
-    range(40, 45): "5-6",
-    range(34, 40): "7-8", 
-    range(28, 34): "9-10",
-    range(22, 28): "11-12",
-    range(16, 22): "13-15",
-    range(10, 16): "16+",
-})
-
-def reading_level_from_cloze(cloze_score: float) -> ReadingLevel:
-    """ Convert cloze score to reading level """
-    bounded_score = max(10, min(64, cloze_score))
-    return EQUIV_CLOZE_AND_READING_LEVELS[bounded_score]
-
-def pct_unfamiliar_words(text: str) -> float:
-    """ Calculate percentage of unfamiliar words """
-    words = _words(text)
-    if not words:
-        return 0.0
-    
-    no_possessives = (w.replace("'s", "").replace("s'", "") for w in words)
-    unfamiliar_words = [w for w in no_possessives if _is_unfamiliar(w)]
-    return len(unfamiliar_words) / len(words)
-
-def avg_sentence_length(text: str) -> float:
-    """ Calculate average sentence length in words """
-    cleaned_text = text.replace("\n", " ").strip()
-    sentences = re.findall(r"\b[^.!?]+[.!?]*", cleaned_text, re.UNICODE)
-    words = _words(text)
-    
-    if not sentences:
-        return 0.0
-    return len(words) / len(sentences)
-
-def _words(in_text: str) -> tuple[str, ...]:
-    """ Extract normalized words from text """
-    plain_text = BeautifulSoup(in_text, "html.parser").text
-    return tuple(w.lower().strip('.(),"\'') for w in plain_text.split() if w.strip())
-
-def _is_unfamiliar(word: str) -> bool:
-    """ Check if word is unfamiliar (not in Dale-Chall list) """
-    if word.isdigit():
-        return False
-    return word not in EASY_WORDS
-
-def is_power_of_two(n: int) -> bool:
-    """Check if n is a power of 2"""
-    return n > 0 and (n & (n - 1)) == 0
-
-def sentence_length_variance(text: str) -> float:
-    """ Calculate variance in sentence lengths """
-    cleaned_text = text.replace("\n", " ").strip()
-    sentences = re.findall(r"\b[^.!?]+[.!?]*", cleaned_text, re.UNICODE)
-    
-    if len(sentences) < 2:
-        return 0.0
-        
-    lengths = [len(sentence.split()) for sentence in sentences]
-    return statistics.variance(lengths) if len(lengths) > 1 else 0.0
-
-def analyze_text_readability(text: str) -> Dict[str, Any]:
-    """ Complete readability analysis """
-    if not text.strip():
-        return {
-            'pct_unfamiliar_words': 0.0,
-            'avg_sentence_length': 0.0,
-            'cloze_score': 64.0,
-            'reading_level': "1",
-            'word_count': 0,
-            'sentence_count': 0,
-            'sentence_length_variance': 0.0,
-            'vocabulary_diversity': 0.0
-        }
-    
-    words = _words(text)
-    pct_unfamiliar = pct_unfamiliar_words(text)
-    avg_sent_len = avg_sentence_length(text)
-    cloze_score = compute_cloze_score(pct_unfamiliar, avg_sent_len)
-    reading_level = reading_level_from_cloze(cloze_score)
-    
-    # Additional metrics for degradation detection
-    unique_words = set(words)
-    vocab_diversity = len(unique_words) / len(words) if words else 0.0
-    
-    cleaned_text = text.replace("\n", " ").strip()
-    sentences = re.findall(r"\b[^.!?]+[.!?]*", cleaned_text, re.UNICODE)
-    
-    return {
-        'pct_unfamiliar_words': round(pct_unfamiliar, 4),
-        'avg_sentence_length': round(avg_sent_len, 2),
-        'cloze_score': cloze_score,
-        'reading_level': reading_level,
-        'word_count': len(words),
-        'sentence_count': len(sentences),
-        'sentence_length_variance': round(sentence_length_variance(text), 2),
-        'vocabulary_diversity': round(vocab_diversity, 4)
-    }
-
-
-# ================================
-# API CLIENT FOR TEXT GENERATION
-# ================================
-
-class StreamingAPIClient:
-    """ Client for generating text continuations via streaming API """
-    
-    def __init__(self, api_url: str, api_password: Optional[str] = None):
-        self.api_url = api_url
-        if not self.api_url.endswith('/v1/chat/completions'):
-            self.api_url = f"{self.api_url.rstrip('/')}/v1/chat/completions"
-            
-        self.headers = {
-            "Content-Type": "application/json",
-            "Accept": "text/event-stream",
-        }
-        
-        if api_password:
-            self.headers["Authorization"] = f"Bearer {api_password}"
-            
-    def count_tokens(self, text: str) -> int:
-        base_url = self.api_url.replace('v1/chat/completions', '')
-        try:
-            response = requests.post(
-                f"{base_url}/api/extra/tokencount",
-                json={"prompt": text},
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if "value" in data:
-                    token_count = data["value"]
-                return token_count
-                
-            return None
-        except Exception as e:
-            print(f"Error counting tokens ({e})")
-            return None
-        
-            
-    def prune_text(self, text: str, max_context: int = 32768):
-        """ Get max amount of text that fits into a natural breakpoint
-        
-        Uses binary search over chunk boundaries to find the largest amount
-        of text that fits within max_context tokens when chunked naturally.
-        """
-        
-        total_tokens = self.count_tokens(text)
-        if total_tokens < max_context:
-            print(f"Full text ({total_tokens:,} tokens) fits within max context ({max_context:,})")
-            return text
-
-        print(f"Pruning text from {total_tokens:,} tokens to fit {max_context:,} tokens at natural boundaries...")
-        
-        # Get all chunk boundaries
-        matches = list(chunk_regex.finditer(text))
-        if not matches:
-            print("Warning: No regex matches found, using character-based truncation")
-            # Fallback: truncate at max_context * 4 characters (rough estimate)
-            return text[:max_context * 4]
-        
-        print(f"Found {len(matches)} natural chunks to work with")
-        
-        # Binary search over chunk boundaries
-        left, right = 0, len(matches)
-        best_text = ""
-        
-        while left < right:
-            mid = (left + right + 1) // 2
-            
-            # Build text up to chunk 'mid'
-            end_pos = matches[mid - 1].end()
-            candidate_text = text[:end_pos]
-            
-            # Count tokens for this candidate
-            candidate_tokens = self.count_tokens(candidate_text)
-            
-            if candidate_tokens <= max_context:
-                best_text = candidate_text
-                left = mid
-                print(f"  Chunk {mid:,}/{len(matches):,}: {candidate_tokens:,} tokens - fits")
-            else:
-                right = mid - 1
-                print(f"  Chunk {mid:,}/{len(matches):,}: {candidate_tokens:,} tokens - too large")
-        
-        final_tokens = self.count_tokens(best_text)
-        print(f"Pruned to {final_tokens:,} tokens ({final_tokens/max_context:.1%} of max context)")
-        
-        return best_text
-        
-    def tokenize_text_batched(self, text: str, chunk_size: int = 45000) -> List[int]:
-        """ Tokenize large text by batching API calls, return token IDs """
-        if not text or not text.strip():
-            return []
-        
-        base_url = self.api_url.replace('/v1/chat/completions', '')
-        all_token_ids = []
-        
-        # Split text into manageable chunks
-        chunks = [text[i:i+chunk_size] for i in range(0, len(text), chunk_size)]
-        
-        print(f"Tokenizing text in {len(chunks)} chunks...")
-        
-        for i, chunk in enumerate(chunks, 1):
-            try:
-                response = requests.post(
-                    f"{base_url}/api/extra/tokencount",
-                    json={"prompt": chunk},
-                    headers={"Content-Type": "application/json"},
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if "ids" in data:
-                        chunk_tokens = data["ids"]
-                        all_token_ids.extend(chunk_tokens)
-                        print(f"  Chunk {i}/{len(chunks)}: {len(chunk_tokens)} tokens")
-                    else:
-                        print(f"  Chunk {i}/{len(chunks)}: No token IDs returned")
-                        # Fallback estimation
-                        estimated_tokens = int(len(chunk.split()) * 1.33)
-                        all_token_ids.extend(range(len(all_token_ids), len(all_token_ids) + estimated_tokens))
-                else:
-                    print(f"  Chunk {i}/{len(chunks)}: API error {response.status_code}")
-                    # Fallback estimation
-                    estimated_tokens = int(len(chunk.split()) * 1.33)
-                    all_token_ids.extend(range(len(all_token_ids), len(all_token_ids) + estimated_tokens))
-                    
-            except Exception as e:
-                print(f"  Chunk {i}/{len(chunks)}: Error {e}")
-                # Fallback estimation
-                estimated_tokens = int(len(chunk.split()) * 1.33)
-                all_token_ids.extend(range(len(all_token_ids), len(all_token_ids) + estimated_tokens))
-        
-        print(f"Total tokens collected: {len(all_token_ids):,}")
-        return all_token_ids
-    
-    def tokens_to_text(self, token_ids: List[int]) -> str:
-        """ Convert token IDs back to text via API """
-        if not token_ids:
-            return ""
-        
-        try:
-            base_url = self.api_url.replace('/v1/chat/completions', '')
-            response = requests.post(
-                f"{base_url}/api/extra/detokenize",
-                json={"ids": token_ids},
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                if data.get("success", False):
-                    return data.get("result", "")
-                else:
-                    print(f"Token detokenize failed: success=False")
-                    return ""
-            else:
-                print(f"Token detokenize failed: {response.status_code}")
-                return ""
-                
-        except Exception as e:
-            print(f"Token detokenize error: {e}")
-            return ""
-    
-    def get_max_context_length(self) -> int:
-        """ Get model's maximum context length from API """
-        try:
-            base_url = self.api_url.replace('/v1/chat/completions', '')
-            response = requests.get(
-                f"{base_url}/api/extra/true_max_context_length", 
-                timeout=10
-            )
-            if response.status_code == 200:
-                max_context = int(response.json().get("value", 32768))
-                print(f"Detected model max context: {max_context:,}")
-                return max_context
-            else:
-                print(f"Could not detect max context, using default: 32768")
-                return 32768
-        except Exception as e:
-            print(f"Error detecting max context ({e}), using default: 32768")
-            return 32768
-    
-    def get_model_name(self) -> Optional[str]:
-        """ Get model name from API """
-        try:
-            base_url = self.api_url.replace('/v1/chat/completions', '')
-            response = requests.get(
-                f"{base_url}/api/v1/model",
-                headers={"Content-Type": "application/json"},
-                timeout=30
-            )
-            if response.status_code == 200:
-                data = response.json()
-                if "result" in data:
-                    model_name = str(data["result"]).replace('koboldcpp/', '')
-                    print(f"Detected model name: {model_name}")
-                    return model_name
-            print("Could not detect model name from API")
-            return None
-        except Exception as e:
-            print(f"Error detecting model name ({e})")
-            return None
-    
-    def generate_continuation(self, context: str, max_tokens: int = 1024,
-                            temperature: float = 1.0, top_k: int = 100, 
-                            top_p: float = 1.0, min_p: float = 0.1, 
-                            rep_pen: float = 1.01) -> str:
-        """ Generate text continuation from context """
-        
-        instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
-        context = find_last_sentence_ending(context)
-        print(f"Starting from: {context[-100:]}")
-        payload = {
-            "messages": [
-                {"role": "system", "content": "You are a skilled novelist continuing a story."},
-                {"role": "user", "content": f"{context}\n\n{instruction}"}
-            ],
-            "max_tokens": max_tokens,
-            "temperature": temperature,
-            "top_p": top_p,
-            "repetition_penalty": rep_pen,
-            "top_k": top_k,
-            "stream": True,
-            "min_p": min_p
-        }
-        
-        result = []
-        
-        try:
-            response = requests.post(
-                self.api_url,
-                json=payload,
-                headers=self.headers,
-                stream=True,
-                timeout=300
-            )
-            
-            for line in response.iter_lines():
-                if not line:
-                    continue
-                    
-                line_text = line.decode('utf-8')
-                if line_text.startswith('data: '):
-                    line_text = line_text[6:]
-                
-                if line_text == '[DONE]':
-                    break
-                    
-                try:
-                    data = json.loads(line_text)
-                    if 'choices' in data and len(data['choices']) > 0:
-                        if 'delta' in data['choices'][0]:
-                            if 'content' in data['choices'][0]['delta']:
-                                token = data['choices'][0]['delta']['content']
-                                result.append(token)
-                                print(token, end='', flush=True)
-                except json.JSONDecodeError:
-                    continue
-            
-            print()  # New line after generation
-            return ''.join(result)
-                
-        except Exception as e:
-            print(f"\nError in generation: {str(e)}")
-            return ""
-
 
 # ================================
 # MAIN DEGRADATION TESTER
@@ -473,7 +63,8 @@ class ReadabilityDegradationTester:
                  word_list_path: str = "easy_words.txt", num_rounds: int = 1, divisions: int = 1,
                  model_name: Optional[str] = None, max_tokens: int = 1024, 
                  temperature: float = 1.0, top_k: int = 100, top_p: float = 1.0, 
-                 min_p: float = 0.1, rep_pen: float = 1.01, start_context: Optional[int] = None):
+                 min_p: float = 0.1, rep_pen: float = 1.01, start_context: Optional[int] = None,
+                 text_name: str = "unknown"):
         """ Initialize the degradation tester
         
         Args:
@@ -490,18 +81,19 @@ class ReadabilityDegradationTester:
             min_p: Min-p sampling
             rep_pen: Repetition penalty
             start_context: Optional starting context size (skip smaller sizes)
+            text_name: Name of the source text file
         """
         self.client = StreamingAPIClient(api_url, api_password)
         initialize_word_list(word_list_path)
         self.num_rounds = max(1, num_rounds)
         self.results = []
         self.detailed_results = []  # Store individual round results
+        self.comprehensive_data = {}  # Store ALL data for JSON export
         self.divisions = max(1, divisions)
         self.all_tokens = []  # Full tokenized text
         self.working_tokens = []  # Last max_context tokens
         self.start_context = start_context  # Optional starting context size
-        
-        # Generation parameters
+        self.text_name = text_name  # Fix: store text_name
         self.max_tokens = max_tokens
         self.temperature = temperature
         self.top_k = top_k
@@ -509,27 +101,24 @@ class ReadabilityDegradationTester:
         self.min_p = min_p
         self.rep_pen = rep_pen
         
-        # Model name (try API first, then fallback to provided name)
         self.model_name = model_name or self.client.get_model_name() or "unknown-model"
     
-    def generate_output_filename(self) -> str:
+    def generate_output_filename(self, extension: str = "csv") -> str:
         """ Generate output filename based on model name and test parameters """
-        # Clean model name for filename
         clean_model = self.model_name.replace('/', '-').replace('\\', '-').replace(':', '-')
-        
-        # Generate filename with key parameters
-        filename = f"{clean_model}-{self.num_rounds}rounds_{self.divisions}divs.csv"
+        clean_text_name = self.text_name.replace('/', '-').replace('\\', '-').replace(':', '-')
+        filename = f"{clean_model}-{clean_text_name}-{self.num_rounds}r{self.divisions}d.{extension}"
         return filename
         
     def normalize_content(self, content: str) -> str:
         """ Convert fixed-width text and normalize characters """
         content = unicodedata.normalize('NFKC', content)
-        content = content.replace('--', '—')
-        #content = content.replace('“', '"').replace('”', '"').replace("’", "'")
-                
+        content = content.replace('--', '—')             
         text = content.replace('\r\n', '\n').replace('\r', '\n')
 
         paragraphs = text.split('\n\n')
+        
+        # Fix windows line breaks and convert fixed width text to wrap
         result = '\n\n'.join(para.replace('\n', ' ') for para in paragraphs)
         result = result.replace('\n\n', '\n\n    ')
         return result
@@ -537,33 +126,19 @@ class ReadabilityDegradationTester:
     def load_reference_text(self, file_path: str) -> str:
         """ Load reference text from file """
         extractor = Extractor()
-        try:
-            content, metadata = extractor.extract_file_to_string(file_path)
-            print(f"Loaded reference text: {metadata.get('resourceName', file_path)}")
-            print(f"Content type: {metadata.get('Content-Type', 'Unknown')}")
-            
-            # Debug text loading
-            if not content or not content.strip():
-                raise ValueError(f"File {file_path} appears to be empty or could not be read")
-            content_size = int(len(content) * 0.8)
-            normalized_content = self.normalize_content(content[:content_size])
-            print(f"Text preview (first 200 chars): {normalized_content[:200]!r}")
-            print(f"Total characters: {len(normalized_content):,}")
-            
-            return normalized_content
-        except Exception as e:
-            print(f"Error loading file: {e}")
-            # Try simple file reading as fallback
-            try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    if content.strip():
-                        normalized_content = self.normalize_content(content)
-                        print(f"Fallback: Successfully loaded {len(normalized_content):,} characters")
-                        return normalized_content
-            except Exception as e2:
-                print(f"Fallback reading also failed: {e2}")
-            raise
+        
+        content, metadata = extractor.extract_file_to_string(file_path)
+        print(f"Loaded reference text: {metadata.get('resourceName', file_path)}")
+        print(f"Content type: {metadata.get('Content-Type', 'Unknown')}")
+        
+        # Debug text loading
+        if not content or not content.strip():
+            raise ValueError(f"File {file_path} appears to be empty or could not be read")
+        content_size = int(len(content) * 0.8)
+        normalized_content = self.normalize_content(content[:content_size])
+        print(f"Text preview (first 200 chars): {normalized_content[:200]!r}")
+        print(f"Total characters: {len(normalized_content):,}")
+        return normalized_content
     
     def prepare_tokenized_text(self, text: str, max_context: int) -> bool:
         """ Tokenize text and prepare working token set 
@@ -580,10 +155,8 @@ class ReadabilityDegradationTester:
         print(f"{'='*60}")
         
         working_size = max_context 
-        # Prune the text to a natural breakpoint
         pruned_text = self.client.prune_text(text, max_context)
-        
-        # Tokenize the full text
+        # Tokenize entire text 
         self.all_tokens = self.client.tokenize_text_batched(pruned_text)
         
         if not self.all_tokens:
@@ -593,7 +166,7 @@ class ReadabilityDegradationTester:
         total_tokens = len(self.all_tokens)
         print(f"Total tokens in reference text: {total_tokens:,}")
         
-        # Check if we have enough tokens for testing
+        # Check if we have enough tokens
         min_required = int(max_context * 1.2)
         if total_tokens < min_required:
             print(f"ERROR: Insufficient text. Need at least {min_required:,} tokens, got {total_tokens:,} after pruning")
@@ -603,6 +176,15 @@ class ReadabilityDegradationTester:
         self.working_tokens = self.all_tokens[-min_required:]
         print(f"Working with {len(self.working_tokens):,} tokens for testing")
         
+        # Store tokenization info for JSON
+        self.comprehensive_data['tokenization'] = {
+            'original_text_chars': len(text),
+            'pruned_text_chars': len(pruned_text),
+            'total_tokens': total_tokens,
+            'working_tokens_count': len(self.working_tokens),
+            'min_required_tokens': min_required,
+            'pruned_text_preview': pruned_text[:500] + "..." if len(pruned_text) > 500 else pruned_text
+        }
         return True
     
     def generate_context_lengths(self, max_context: int) -> List[int]:
@@ -724,23 +306,25 @@ class ReadabilityDegradationTester:
         
         if len(round_results) == 1:
             result = round_results[0].copy()
-            # Add std fields for single results
             result['num_rounds'] = 1
             result['cloze_score_std'] = 0.0
             result['vocab_diversity_std'] = 0.0
             result['timestamp'] = datetime.now().isoformat()
             return result
         
-        # Numerical fields to average
         numerical_fields = [
             'pct_unfamiliar_words', 'avg_sentence_length', 'cloze_score',
             'word_count', 'sentence_count', 'sentence_length_variance',
-            'vocabulary_diversity', 'continuation_length'
+            'vocabulary_diversity', 'continuation_length',
+            'bigram_repetition_rate', 'trigram_repetition_rate', 'unique_word_ratio_100',
+            'word_entropy', 'char_entropy',
+            'comma_density', 'semicolon_density', 'question_density', 'exclamation_density',
+            'avg_syllables_per_word', 'long_word_ratio', 'function_word_ratio',
+            'sentence_length_skewness', 'sentence_length_kurtosis', 'avg_word_length'
         ]
         
         averaged = {}
         
-        # Copy non-numerical fields from first result
         for key, value in round_results[0].items():
             if key not in numerical_fields:
                 averaged[key] = value
@@ -753,27 +337,23 @@ class ReadabilityDegradationTester:
             else:
                 averaged[field] = 0.0
         
-        # Recalculate reading level from averaged cloze score
         if 'cloze_score' in averaged:
             averaged['reading_level'] = reading_level_from_cloze(averaged['cloze_score'])
         
-        # Add round statistics
         averaged['num_rounds'] = len(round_results)
         
-        # Calculate std deviations safely
         cloze_values = [r['cloze_score'] for r in round_results if 'cloze_score' in r and r['cloze_score'] is not None]
         vocab_values = [r['vocabulary_diversity'] for r in round_results if 'vocabulary_diversity' in r and r['vocabulary_diversity'] is not None]
         
         averaged['cloze_score_std'] = round(statistics.stdev(cloze_values), 3) if len(cloze_values) > 1 else 0.0
         averaged['vocab_diversity_std'] = round(statistics.stdev(vocab_values), 4) if len(vocab_values) > 1 else 0.0
         
-        # Update timestamp to when averaging was done
         averaged['timestamp'] = datetime.now().isoformat()
         
         return averaged
     
     def run_test(self, file_path: str, max_context: Optional[int] = None) -> List[Dict]:
-        """ Run the complete degradation test with fixed continuation point
+        """ Run the complete degradation test
         
         Args:
             file_path: Path to reference text file
@@ -788,30 +368,78 @@ class ReadabilityDegradationTester:
             print(f"Running {self.num_rounds} rounds per context length")
         print("=" * 60)
         
-        # Load reference text
-        reference_text = self.load_reference_text(file_path)
+        test_start_time = datetime.now()
+        self.comprehensive_data = {
+            'experiment_metadata': {
+                'model_name': self.model_name,
+                'source_text_file': file_path,
+                'source_text_name': self.text_name,
+                'start_time': test_start_time.isoformat(),
+                'num_rounds': self.num_rounds,
+                'divisions': self.divisions,
+                'start_context': self.start_context,
+                'generation_params': {
+                    'max_tokens': self.max_tokens,
+                    'temperature': self.temperature,
+                    'top_k': self.top_k,
+                    'top_p': self.top_p,
+                    'min_p': self.min_p,
+                    'rep_pen': self.rep_pen
+                },
+                'api_url': self.client.api_url
+            },
+            'rounds': [],
+            'errors': [],
+            #'outlier_analysis': {},
+            'summary_stats': {}
+        }
         
-        # Determine max context
+        try:
+            reference_text = self.load_reference_text(file_path)
+            self.comprehensive_data['reference_text'] = {
+                'length_chars': len(reference_text),
+                'preview': reference_text[:1000] + "..." if len(reference_text) > 1000 else reference_text
+            }
+        except Exception as e:
+            error_msg = f"Failed to load reference text: {e}"
+            print(error_msg)
+            self.comprehensive_data['errors'].append({
+                'timestamp': datetime.now().isoformat(),
+                'type': 'text_loading',
+                'message': error_msg
+            })
+            return []
+        
         if max_context is None:
             max_context = self.client.get_max_context_length()
         else:
             print(f"Using user-specified max context: {max_context:,}")
         
-        # Prepare tokenized text
+        self.comprehensive_data['experiment_metadata']['max_context'] = max_context
+        
         if not self.prepare_tokenized_text(reference_text, max_context):
-            print("Failed to prepare tokenized text")
+            error_msg = "Failed to prepare tokenized text"
+            print(error_msg)
+            self.comprehensive_data['errors'].append({
+                'timestamp': datetime.now().isoformat(),
+                'type': 'tokenization',
+                'message': error_msg
+            })
             return []
         
         # Analyze baseline readability
         baseline_text = self.client.tokens_to_text(self.working_tokens[-5000:] if len(self.working_tokens) > 5000 else self.working_tokens)
-        baseline_analysis = analyze_text_readability(baseline_text)
+        baseline_analysis = analyze_text_comprehensive(baseline_text)
         print(f"\nBaseline text readability (from continuation point area):")
         print(f"  Cloze Score: {baseline_analysis['cloze_score']}")
         print(f"  Reading Level: {baseline_analysis['reading_level']}")
         print(f"  Vocabulary Diversity: {baseline_analysis['vocabulary_diversity']}")
         
+        self.comprehensive_data['baseline_analysis'] = baseline_analysis
+        
         # Generate test context lengths
         context_lengths = self.generate_context_lengths(max_context)
+        self.comprehensive_data['context_lengths'] = context_lengths
         
         print(f"\n{'='*60}")
         print("RUNNING DEGRADATION TESTS")
@@ -827,8 +455,19 @@ class ReadabilityDegradationTester:
                 print(f"Running {self.num_rounds} rounds...")
             print("-" * 50)
             
-            # Build context window (same for all rounds)
-            context = self.build_context_window(context_length)
+            # Build context window
+            try:
+                context = self.build_context_window(context_length)
+            except Exception as e:
+                error_msg = f"Failed to build context for {context_length} tokens: {e}"
+                print(f"WARNING: {error_msg}")
+                self.comprehensive_data['errors'].append({
+                    'timestamp': datetime.now().isoformat(),
+                    'type': 'context_building',
+                    'context_length': context_length,
+                    'message': error_msg
+                })
+                continue
             
             if not context:
                 print(f"WARNING: Failed to build context for {context_length} tokens")
@@ -836,7 +475,14 @@ class ReadabilityDegradationTester:
             
             print(f"Context built successfully ({len(context.split())} words)")
             
-            # Run multiple rounds
+            context_info = {
+                'context_length_target': context_length,
+                'context_length_actual': self.client.count_tokens(context),
+                'context_text_chars': len(context),
+                'context_word_count': len(context.split()),
+                'context_preview': context[-500:] if len(context) > 500 else context  # Last 500 chars to see ending
+            }
+            
             round_results = []
             
             for round_num in range(self.num_rounds):
@@ -845,38 +491,94 @@ class ReadabilityDegradationTester:
                 else:
                     print(f"Generating continuation...")
                 
-                # Generate continuation
-                continuation = self.client.generate_continuation(
-                    context, 
-                    max_tokens=self.max_tokens,
-                    temperature=self.temperature,
-                    top_k=self.top_k,
-                    top_p=self.top_p,
-                    min_p=self.min_p,
-                    rep_pen=self.rep_pen
-                )
+                round_start_time = datetime.now()
+                
+                try:
+                    continuation = self.client.generate_continuation(
+                        context, 
+                        max_tokens=self.max_tokens,
+                        temperature=self.temperature,
+                        top_k=self.top_k,
+                        top_p=self.top_p,
+                        min_p=self.min_p,
+                        rep_pen=self.rep_pen
+                    )
+                except Exception as e:
+                    error_msg = f"Generation failed for round {round_num + 1}: {e}"
+                    print(f"WARNING: {error_msg}")
+                    self.comprehensive_data['errors'].append({
+                        'timestamp': datetime.now().isoformat(),
+                        'type': 'generation',
+                        'context_length': context_length,
+                        'round_number': round_num + 1,
+                        'message': error_msg
+                    })
+                    continue
                 
                 if not continuation:
                     print(f"WARNING: No continuation generated for round {round_num + 1}")
                     continue
                 
-                # Analyze readability
-                analysis = analyze_text_readability(continuation)
+                round_end_time = datetime.now()
+                generation_time = (round_end_time - round_start_time).total_seconds()
                 
-                # Store detailed result
+                try:
+                    analysis = analyze_text_comprehensive(continuation)
+                except Exception as e:
+                    error_msg = f"Analysis failed for round {round_num + 1}: {e}"
+                    print(f"WARNING: {error_msg}")
+                    self.comprehensive_data['errors'].append({
+                        'timestamp': datetime.now().isoformat(),
+                        'type': 'analysis',
+                        'context_length': context_length,
+                        'round_number': round_num + 1,
+                        'message': error_msg
+                    })
+                    continue
+                
                 detailed_result = {
                     'context_length': context_length,
-                    'actual_context_tokens': context_length,  # Now exact
+                    'actual_context_tokens': context_info['context_length_actual'],
                     'round_number': round_num + 1,
                     'continuation_length': len(continuation),
-                    'timestamp': datetime.now().isoformat(),
+                    'continuation_tokens': self.client.count_tokens(continuation),
+                    'generation_time_seconds': generation_time,
+                    'timestamp': round_end_time.isoformat(),
                     **analysis
                 }
                 
                 round_results.append(detailed_result)
                 self.detailed_results.append(detailed_result)
                 
-                # Display round results
+                round_data = {
+                    'round_id': f"{context_length}_{round_num + 1}",
+                    'context_length': context_length,
+                    'round_number': round_num + 1,
+                    'timestamps': {
+                        'start': round_start_time.isoformat(),
+                        'end': round_end_time.isoformat(),
+                        'generation_time_seconds': generation_time
+                    },
+                    'context_info': context_info,
+                    'llm_output': continuation,
+                    'continuation_stats': {
+                        'length_chars': len(continuation),
+                        'length_tokens': self.client.count_tokens(continuation),
+                        'word_count': len(continuation.split())
+                    },
+                    'analysis': analysis,
+                    'generation_params_used': {
+                        'max_tokens': self.max_tokens,
+                        'temperature': self.temperature,
+                        'top_k': self.top_k,
+                        'top_p': self.top_p,
+                        'min_p': self.min_p,
+                        'rep_pen': self.rep_pen
+                    }
+                }
+                
+                self.comprehensive_data['rounds'].append(round_data)
+                
                 if self.num_rounds > 1:
                     print(f"    Cloze: {analysis['cloze_score']:6.2f}, "
                           f"Level: {analysis['reading_level']:>6}, "
@@ -890,7 +592,6 @@ class ReadabilityDegradationTester:
             averaged_result = self.average_results(round_results)
             self.results.append(averaged_result)
             
-            # Display averaged results
             print(f"\nAveraged Results (n={len(round_results)}):")
             print(f"  Cloze Score: {averaged_result['cloze_score']:6.2f} "
                   f"(±{averaged_result['cloze_score_std']:4.2f})")
@@ -903,8 +604,13 @@ class ReadabilityDegradationTester:
         
         # Outlier analysis and filtering
         if len(self.detailed_results) >= 4:  # Need minimum data for outlier detection
+            # Skip for now
+            pass
+
             try:
                 outlier_analysis = analyze_round_outliers(self.detailed_results)
+                self.comprehensive_data['outlier_analysis'] = outlier_analysis
+                
                 if outlier_analysis.get('has_outliers', False):
                     print_outlier_summary(outlier_analysis, max_context)
                     # Filter severe outliers from detailed results for final averaging
@@ -931,17 +637,63 @@ class ReadabilityDegradationTester:
                         if filtered_averaged_results:  # Only update if we got valid results
                             self.results = filtered_averaged_results
             except Exception as e:
-                print(f"\n⚠️  Outlier analysis failed: {e}")
+                error_msg = f"Outlier analysis failed: {e}"
+                print(f"\n⚠️  {error_msg}")
                 print("Continuing with original results...")
+                self.comprehensive_data['errors'].append({
+                    'timestamp': datetime.now().isoformat(),
+                    'type': 'outlier_analysis',
+                    'message': error_msg
+                })
+        
+        # Finalize comprehensive data
+        test_end_time = datetime.now()
+        self.comprehensive_data['experiment_metadata']['end_time'] = test_end_time.isoformat()
+        self.comprehensive_data['experiment_metadata']['total_duration_seconds'] = (test_end_time - test_start_time).total_seconds()
+        
+        # Calculate summary statistics
+        if self.results:
+            self.comprehensive_data['summary_stats'] = self._calculate_summary_stats()
         
         # Analysis and summary
         self._print_summary()
         
-        # Auto-generate filename and save results
-        output_file = self.generate_output_filename()
-        self._save_results(output_file)
+        # Auto-generate filenames and save results
+        csv_file = self.generate_output_filename("csv")
+        json_file = self.generate_output_filename("json")
+        
+        success = make_png(self.enhanced_results, csv_file)
+            if not success:
+                print("Plot generation failed!")
+        
+        self._save_results(csv_file)
+        self._save_comprehensive_json(json_file)
         
         return self.results
+    
+    def _calculate_summary_stats(self) -> Dict[str, Any]:
+        """ Calculate summary statistics across all results """
+        if not self.results:
+            return {}
+        
+        metrics = ['cloze_score', 'vocabulary_diversity', 'sentence_length_variance', 
+                  'word_entropy', 'char_entropy', 'bigram_repetition_rate', 'trigram_repetition_rate']
+        
+        summary = {}
+        for metric in metrics:
+            values = [r[metric] for r in self.results if metric in r]
+            if values:
+                summary[f"{metric}_trend"] = {
+                    'start': values[0],
+                    'end': values[-1],
+                    'change': values[-1] - values[0],
+                    'min': min(values),
+                    'max': max(values),
+                    'mean': statistics.mean(values),
+                    'stdev': statistics.stdev(values) if len(values) > 1 else 0.0
+                }
+        
+        return summary
     
     def _print_summary(self):
         """ Print test summary and degradation analysis """
@@ -1017,7 +769,7 @@ class ReadabilityDegradationTester:
         else:
             print(f"\n✅ No significant degradation detected in tested range")
         
-        # Print full results table
+        # Print full results table (keeping backward compatibility - only showing main metrics)
         print(f"\nFULL RESULTS:")
         if self.num_rounds > 1:
             print(f"{'Context':>8} {'Cloze':>8} {'±Std':>6} {'Level':>8} {'Unfamiliar':>10} {'AvgSent':>8} {'Variance':>8} {'VocabDiv':>8} {'±Std':>6}")
@@ -1047,7 +799,7 @@ class ReadabilityDegradationTester:
                       f"{result['vocabulary_diversity']:>8.3f}")
     
     def _save_results(self, output_file: str):
-        """ Save results to CSV """
+        """ Save results to CSV (backward compatible) """
         if not self.results:
             return
         
@@ -1079,6 +831,18 @@ class ReadabilityDegradationTester:
         print(f"   Rounds: {self.num_rounds}, Divisions: {self.divisions}")
         print(f"   Generation params: max_tokens={self.max_tokens}, temp={self.temperature}, top_k={self.top_k}")
         print(f"                     top_p={self.top_p}, min_p={self.min_p}, rep_pen={self.rep_pen}")
+    
+    def _save_comprehensive_json(self, output_file: str):
+        """ Save comprehensive data to JSON """
+        try:
+            with open(output_file, 'w', encoding='utf-8') as f:
+                json.dump(self.comprehensive_json, f, indent=2, ensure_ascii=False)
+            print(f"📊 Comprehensive data saved to: {output_file}")
+            print(f"   Contains: {len(self.comprehensive_json['rounds'])} rounds, "
+                  f"{len(self.comprehensive_json.get('errors', []))} errors, "
+                  f"full LLM outputs & analysis")
+        except Exception as e:
+            print(f"⚠️  Failed to save JSON: {e}")
 
 
 # ================================
@@ -1097,12 +861,7 @@ Examples:
   python main.py novel.txt --rounds 5 --divisions 2 --temp 0.8 --top-k 50
   python main.py text.txt --max-tokens 1024 --rep-pen 1.05 --min-p 0.05
   python main.py novel.txt --start-context 8192  # Skip testing small contexts
-
-CRITICAL IMPROVEMENT: All continuations now start from the same story position!
-This eliminates confounding variables from different story contexts.
-
-Output files are automatically named based on model and test parameters.
-        """
+"""
     )
     
     parser.add_argument(
@@ -1208,7 +967,9 @@ Output files are automatically named based on model and test parameters.
     if not is_power_of_two(args.divisions):
         print(f"Divisions must be 1 or a power of 2 such as 2 or 4 or 8")
         return 1
-        
+    
+    text_name = os.path.basename(args.input_file)
+    
     try:
         tester = ReadabilityDegradationTester(
             api_url=args.api_url,
@@ -1223,7 +984,8 @@ Output files are automatically named based on model and test parameters.
             top_p=args.top_p,
             min_p=args.min_p,
             rep_pen=args.rep_pen,
-            start_context=args.start_context
+            start_context=args.start_context,
+            text_name=text_name
         )
         
         tester.run_test(
