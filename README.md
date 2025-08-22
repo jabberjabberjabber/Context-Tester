@@ -86,26 +86,6 @@ Since this test doesn't evaluate coherence, style, accuracy, or instruction foll
 
 The test is meant as a starting point and as a simple and easily readable indicator of consistency.
  
-### Readability Metrics
-
-**Cloze Score**: Primary readability indicator
-- *LOWER IS BETTER*
-- Range: 10-64 (higher = more readable)
-- Formula: `64 - (95 × pct_unfamiliar_words) - (0.69 × avg_sentence_length)`
-- Based on Dale-Chall readability research
-
-**Vocabulary Diversity**: `unique_words / total_words`
-- Range: 0.0-1.0 (higher = more diverse)
-- Measures repetitiveness and word choice variety
-
-**Sentence Length Variance**: Statistical variance of sentence lengths
-- Higher values indicate more varied sentence structure
-- Lower values suggest repetitive patterns
-
-**Unfamiliar Words Percentage**: Words not in Dale-Chall easy list
-- Lower percentages indicate simpler vocabulary
-- Sudden increases may signal degradation
-
 ## Detailed Usage
 
 ```bash
