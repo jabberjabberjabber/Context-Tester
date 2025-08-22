@@ -663,8 +663,8 @@ class ReadabilityDegradationTester:
         json_file = self.generate_output_filename("json")
         
         success = make_png(self.enhanced_results, csv_file)
-            if not success:
-                print("Plot generation failed!")
+        if not success:
+            print("Plot generation failed!")
         
         self._save_results(csv_file)
         self._save_comprehensive_json(json_file)
