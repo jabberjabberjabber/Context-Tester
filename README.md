@@ -82,7 +82,9 @@ Here is a counter example:
 
 This is an ideal result without any large spikes up or down.
 
-Since this test doesn't evaluate coherence, style, accuracy, or instruction following, it should be used as evidence of model capability. A good result could be achieved by the model generating well structured, diverse nonsense. The test is meant as a starting point and as a simple and easily readable indicator of consistency. 
+Since this test doesn't evaluate coherence, style, accuracy, or instruction following, it should not be used as evidence of model capability. A good result could be achieved by the model generating well structured, diverse nonsense. 
+
+The test is meant as a starting point and as a simple and easily readable indicator of consistency.
  
 ### Readability Metrics
 
