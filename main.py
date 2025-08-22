@@ -918,8 +918,8 @@ Examples:
     parser.add_argument(
         '--max-tokens',
         type=int,
-        default=512,
-        help='Maximum tokens to generate (default: 512)'
+        default=1024,
+        help='Maximum tokens to generate (default: 1024)'
     )
     
     parser.add_argument(
