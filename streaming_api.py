@@ -30,7 +30,7 @@ class StreamingAPIClient:
                 f"{base_url}/api/extra/tokencount",
                 json={"prompt": text},
                 headers={"Content-Type": "application/json"},
-                timeout=30
+                timeout=180
             )
             
             if response.status_code == 200:

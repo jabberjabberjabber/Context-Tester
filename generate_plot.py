@@ -19,6 +19,10 @@ Requirements:
     pip install pandas matplotlib numpy
 """
 
+#################################
+#VIBE CODED with Claude Sonnet 4#
+#################################
+
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
@@ -48,12 +52,14 @@ def get_base_name(filename):
         Base name truncated at first non-alphanumeric character
     """
     # Remove extension first
-    base = Path(filename).stem
+    #base = os.path.splitext(filename)[1]
+    #base = Path(filename).stem
     # Find first non-alphanumeric character (excluding underscore and hyphen)
-    match = re.search(r'[^a-zA-Z0-9_-]', base)
-    if match:
-        return base[:match.start()]
-    return base
+    #match = re.search(r'[^a-zA-Z0-9_-]', base)
+    #if match:
+    #    return base[:match.start()]
+    #print(base)
+    return os.path.splitext(os.path.basename(filename))[0]
 
 def generate_output_filename(csv_files):
     """ Generate output PNG filename based on input CSV files.
@@ -170,19 +176,15 @@ def calculate_axis_ranges(data, dataset_names):
     if vocab_values:
         vocab_min, vocab_max = min(vocab_values), max(vocab_values)
         vocab_range = vocab_max - vocab_min
-        vocab_padding = vocab_range * 0.1
-        # Range of 0.50
-        if vocab_range < 0.51:
+        # Check lowest point on Y axis
+        if vocab_min > 0.20:
+            # Use the common Y values if it fits
             ranges['vocab_diversity'] = (0.20, 0.70)
-        # If the lowest value falls off the graph, set y axis to it
+        # Otherwise move the Y axis up while keeping the same range
         else:
-            ranges['vocab_diversity'] = (vocab_min - vocab_padding, vocab_min - vocab_padding + 0.50)
-        #ranges['vocab_diversity'] = (max(0, vocab_min - vocab_padding), vocab_max + vocab_padding)
-    
+            ranges['vocab_diversity'] = (vocab_min - .05, vocab_min + 0.45)
     else:
         ranges['vocab_diversity'] = (0.20, 0.70)
-    
-    # Sentence length variance
     
     # Cloze score
     cloze_values = []
@@ -197,18 +199,15 @@ def calculate_axis_ranges(data, dataset_names):
         cloze_min, cloze_max = min(cloze_values), max(cloze_values)
         cloze_range = cloze_max - cloze_min
         cloze_padding = cloze_range * 0.1
-        # Range of 25
-        if cloze_range < 26:
+        # Check lowest point on Y axis
+        if cloze_min > 15:
+            # Use the common Y values if it fits
             ranges['cloze_score'] = (15, 40)
-        # Set y axis to be the min value
-        else:
-            ranges['close_score'] = (cloze_min - cloze_padding, cloze_min - cloze_padding + 25)
-        #ranges['cloze_score'] = (max(0, cloze_min - cloze_padding), cloze_max + cloze_padding)
+        # Otherwise move the Y axis up while keeping the same range
+        else: 
+            ranges['cloze_score'] = (cloze_min - 2, cloze_min + 23)
     else:
         ranges['cloze_score'] = (15, 40)
-    
-    # Calculate penalty range based on actual data
-    ranges['sentence_penalty'] = (0, 2.0)  # Keep fixed for consistency
     
     return ranges
 
@@ -270,7 +269,6 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     
     # Plot 1: Creativity Metrics
     ax1 = axes[0]
-    #ax1_twin = ax1.twinx()
     
     # Collect values for axis alignment
     vocab_plot_values = []
@@ -278,7 +276,6 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     
     for j, dataset_name in enumerate(dataset_names):
         vocab_col = f'vocabulary_diversity_{dataset_name}'
-        #variance_col = f'sentence_length_variance_{dataset_name}'
         
         if vocab_col in data.columns:
             mask = data[vocab_col].notna() & data['context_length'].notna()
@@ -299,23 +296,12 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     ax1.set_ylim(ranges['vocab_diversity'])
     ax1.grid(True, alpha=0.3)
     
-    # Align twin axis
-    #aligned_variance_range = align_twin_axis(
-    #    ranges['vocab_diversity'], ranges['sentence_variance'],
-    #    vocab_plot_values, variance_plot_values
-    #)
-    
-    #ax1_twin.set_ylabel('Sentence Length Variance', color='gray')
-    #ax1_twin.set_ylim(aligned_variance_range)
-    
     # Combined legend
     lines1, labels1 = ax1.get_legend_handles_labels()
-    #lines2, labels2 = ax1_twin.get_legend_handles_labels()
-    #ax1.legend(lines1 + lines2, labels1 + labels2, loc='best')
     ax1.legend(lines1, labels1, loc='best')
+    
     # Plot 2: Degradation Metrics (with adaptive baseline)
     ax2 = axes[1]
-    #ax2_twin = ax2.twinx()
     
     # Collect values for axis alignment
     cloze_plot_values = []
@@ -323,7 +309,6 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     
     for j, dataset_name in enumerate(dataset_names):
         cloze_col = f'cloze_score_{dataset_name}'
-        sentence_col = f'avg_sentence_length_{dataset_name}'
         
         # Plot cloze score
         if cloze_col in data.columns:
@@ -344,20 +329,10 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     ax2.set_ylim(ranges['cloze_score'])
     ax2.grid(True, alpha=0.3)
     
-    # Align twin axis
-    aligned_penalty_range = align_twin_axis(
-        ranges['cloze_score'], ranges['sentence_penalty'],
-        cloze_plot_values, penalty_plot_values
-    )
-    
-    #ax2_twin.set_ylabel('Sentence Length Penalty (Log)', color='gray')
-    #ax2_twin.set_ylim(aligned_penalty_range)
-    
     # Combined legend
     lines3, labels3 = ax2.get_legend_handles_labels()
-    #lines4, labels4 = ax2_twin.get_legend_handles_labels()
-    #ax2.legend(lines3 + lines4, labels3 + labels4, loc='best')
     ax2.legend(lines3, labels3, loc='best')
+    
     # Format x-axis labels for both plots
     for ax in [ax1, ax2]:
         if len(data['context_length'].dropna()) > 0:
@@ -682,7 +657,7 @@ def create_summary_analysis(data, dataset_names):
     for dataset in dataset_names:
         cloze_col = f'cloze_score_{dataset}'
         vocab_col = f'vocabulary_diversity_{dataset}'
-        #variance_col = f'sentence_length_variance_{dataset}'
+        variance_col = f'sentence_length_variance_{dataset}'
         
         if cloze_col in data.columns and not data[cloze_col].isna().all():
             # Find the optimal point (minimum cloze score)
@@ -758,7 +733,7 @@ def make_png(enhanced_results, output_file_path, silent=True):
         
         # Generate output filenames
         main_plot_file = f"{base_output_path}.png"
-        detailed_plot_file = f"{base_output_path}_detailed.png"
+        #detailed_plot_file = f"{base_output_path}_detailed.png"
         
         # Create single-dataset merged format expected by plotting functions
         data = df.copy()
@@ -793,11 +768,7 @@ def parse_arguments():
     
     parser.add_argument('csv_files', nargs='+', 
                        help='Path(s) to CSV files (1-6 files supported)')
-    parser.add_argument('--no-plots', action='store_true',
-                       help='Skip generating plots (useful for headless environments)')
-    parser.add_argument('--dpi', type=int, default=300,
-                       help='Output image DPI (default: 300)')
-    
+
     return parser.parse_args()
 
 def main():
@@ -817,7 +788,6 @@ def main():
     try:
         # Generate output filename automatically
         main_output_file = generate_output_filename(args.csv_files)
-        detailed_output_file = main_output_file.replace('.png', '_detailed.png')
         
         # Load and merge data
         print(f"Loading data from {len(args.csv_files)} file(s)...")
@@ -828,19 +798,12 @@ def main():
         print(f"Successfully merged {len(data)} context length comparisons")
         print(f"Datasets: {', '.join(dataset_names)}")
         
-        # Create visualizations (unless disabled)
-        if not args.no_plots:
-            print("Creating comparison plots...")
-            create_comparison_plots(data, dataset_names, main_output_file, args.dpi)
-            #create_detailed_metrics_plots(data, dataset_names, detailed_output_file, args.dpi)
-        else:
-            print("Skipping plots (--no-plots specified)")
-        
+        create_comparison_plots(data, dataset_names, main_output_file)
         # Detailed analysis
-        analyze_performance_ranges(data, dataset_names)
+        #analyze_performance_ranges(data, dataset_names)
         
         # Summary insights
-        create_summary_analysis(data, dataset_names)
+        #create_summary_analysis(data, dataset_names)
         
     except FileNotFoundError as e:
         print(f"Error: Could not find one or more CSV files.")
