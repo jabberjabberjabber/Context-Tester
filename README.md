@@ -23,7 +23,7 @@ This repository contains two primary analysis tools:
 
 - A large text to use as the basis for continuation
 - Python 3.8 or higher
-- A running KoboldCpp LLM API server
+- A KoboldCpp API server running a language model and a sentence embeddings model
 
 ### Dependencies
 
@@ -43,6 +43,10 @@ uv sync
 
 Ensure you have a running inference instance running a KoboldCpp endpoint that you can connect to. Ensure that you have a properly formatted creative text such as a novel which has at least enough text in it to max out the tokens you are testing for.  
 
+```
+koboldcpp --model modelname.gguf --contextsize 32768 --embeddingsmodel all-MiniLM-L6-v2-Q8_0.gguf
+```
+
 Run data collection:
 
 ```
@@ -60,7 +64,7 @@ You can put as many as you like and it will plot the data for each of them onto 
 
 ## Input Text
 
-Texts can be any type supported by extractous such as txt or pdf or html. It can be any formatting but better results are obtained if the paragraphs are separated by 2 blank lines and there is no introduction, index, or any other text in it except the story and chapter headings.
+Texts can be any type supported by extractous such as txt or pdf or html. It can be any formatting but better results are obtained if the paragraphs are separated by a blank line and there is no introduction, index, or any other text in it except the story and chapter headings.
  
 ## Understanding the Metrics
 

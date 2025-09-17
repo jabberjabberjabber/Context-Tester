@@ -240,13 +240,99 @@ def align_twin_axis(primary_range, secondary_range, primary_values, secondary_va
     target_secondary_max = target_secondary_min + secondary_span
     
     return (target_secondary_min, target_secondary_max)
-
-def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300, silent=False):
-    """ Create adaptive baseline comparison plots for multiple datasets.
+def calculate_axis_ranges_extended(data, dataset_names):
+    """ Calculate appropriate axis ranges based on actual data for all four metrics.
     
-    Creates two plots:
-    1. Creativity Plot: vocab_diversity + sentence_length_variance
-    2. Degradation Plot: cloze_score + adaptive sentence length penalty
+    Args:
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
+        
+    Returns:
+        Dictionary with calculated ranges for each metric
+    """
+    ranges = {}
+    
+    # Vocabulary diversity
+    vocab_values = []
+    for dataset in dataset_names:
+        col = f'vocabulary_diversity_{dataset}'
+        if col in data.columns:
+            vals = data[col].dropna()
+            if len(vals) > 0:
+                vocab_values.extend(vals)
+    
+    if vocab_values:
+        vocab_min, vocab_max = min(vocab_values), max(vocab_values)
+        vocab_range = vocab_max - vocab_min
+        if vocab_min > 0.20:
+            ranges['vocab_diversity'] = (0.20, 0.70)
+        else:
+            ranges['vocab_diversity'] = (vocab_min - .05, vocab_min + 0.45)
+    else:
+        ranges['vocab_diversity'] = (0.20, 0.70)
+    
+    # Cloze score
+    cloze_values = []
+    for dataset in dataset_names:
+        col = f'cloze_score_{dataset}'
+        if col in data.columns:
+            vals = data[col].dropna()
+            if len(vals) > 0:
+                cloze_values.extend(vals)
+    
+    if cloze_values:
+        cloze_min, cloze_max = min(cloze_values), max(cloze_values)
+        if cloze_min > 15:
+            ranges['cloze_score'] = (15, 40)
+        else: 
+            ranges['cloze_score'] = (cloze_min - 2, cloze_min + 23)
+    else:
+        ranges['cloze_score'] = (15, 40)
+    
+    # Adjacent coherence
+    coherence_values = []
+    for dataset in dataset_names:
+        col = f'adjacent_coherence_{dataset}'
+        if col in data.columns:
+            vals = data[col].dropna()
+            if len(vals) > 0:
+                coherence_values.extend(vals)
+    
+    if coherence_values:
+        coherence_min, coherence_max = min(coherence_values), max(coherence_values)
+        coherence_range = coherence_max - coherence_min
+        coherence_padding = coherence_range * 0.1
+        ranges['adjacent_coherence'] = (coherence_min - coherence_padding, coherence_max + coherence_padding)
+    else:
+        ranges['adjacent_coherence'] = (0.0, 1.0)
+    
+    # Bigram repetition rate
+    bigram_values = []
+    for dataset in dataset_names:
+        col = f'bigram_repetition_rate_{dataset}'
+        if col in data.columns:
+            vals = data[col].dropna()
+            if len(vals) > 0:
+                bigram_values.extend(vals)
+    
+    if bigram_values:
+        bigram_min, bigram_max = min(bigram_values), max(bigram_values)
+        bigram_range = bigram_max - bigram_min
+        bigram_padding = bigram_range * 0.1
+        ranges['bigram_repetition'] = (bigram_min - bigram_padding, bigram_max + bigram_padding)
+    else:
+        ranges['bigram_repetition'] = (0.0, 0.5)
+    
+    return ranges
+    
+def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300, silent=False):
+    """ Create comprehensive performance comparison plots for multiple datasets.
+    
+    Creates four plots in a 2x2 layout:
+    1. Vocabulary Diversity (creativity metric)
+    2. Cloze Score (degradation metric)
+    3. Adjacent Coherence (text quality metric)
+    4. Bigram Repetition Rate (repetition metric)
     
     Args:
         data: Merged dataframe with all dataset metrics
@@ -259,20 +345,16 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     import matplotlib
     matplotlib.use('Agg')
     
-    # Calculate dynamic ranges
-    ranges = calculate_axis_ranges(data, dataset_names)
+    # Calculate dynamic ranges for all metrics
+    ranges = calculate_axis_ranges_extended(data, dataset_names)
     
-    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-    fig.suptitle('Model Performance Analysis: Creativity vs Degradation', fontsize=16, fontweight='bold')
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('Model Performance Analysis: Comprehensive Metrics', fontsize=16, fontweight='bold')
     
     colors, markers = get_plot_colors_and_markers()
     
-    # Plot 1: Creativity Metrics
-    ax1 = axes[0]
-    
-    # Collect values for axis alignment
-    vocab_plot_values = []
-    variance_plot_values = []
+    # Plot 1: Vocabulary Diversity (top-left)
+    ax1 = axes[0, 0]
     
     for j, dataset_name in enumerate(dataset_names):
         vocab_col = f'vocabulary_diversity_{dataset_name}'
@@ -281,60 +363,90 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
             mask = data[vocab_col].notna() & data['context_length'].notna()
             if mask.any():
                 values = data.loc[mask, vocab_col].tolist()
-                vocab_plot_values.extend(values)
                 ax1.plot(data.loc[mask, 'context_length'], values, 
                         marker=markers[j % len(markers)], color=colors[j % len(colors)],
-                        linewidth=3, markersize=6, label=f'{dataset_name} (vocab)', linestyle='-')
-        
-     
+                        linewidth=3, markersize=6, label=dataset_name, linestyle='-')
     
-    # Set primary axis
     ax1.set_xscale('log')
     ax1.set_xlabel('Context Length')
-    ax1.set_ylabel('Vocabulary Diversity', color='black')
-    ax1.set_title('Creativity Metrics', fontweight='bold')
-    ax1.set_ylim(ranges['vocab_diversity'])
+    ax1.set_ylabel('Vocabulary Diversity')
+    ax1.set_title('Vocabulary Diversity (Higher is Better)', fontweight='bold')
+    if 'vocab_diversity' in ranges:
+        ax1.set_ylim(ranges['vocab_diversity'])
     ax1.grid(True, alpha=0.3)
+    ax1.legend(loc='best', fontsize=8)
     
-    # Combined legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    ax1.legend(lines1, labels1, loc='best')
-    
-    # Plot 2: Degradation Metrics (with adaptive baseline)
-    ax2 = axes[1]
-    
-    # Collect values for axis alignment
-    cloze_plot_values = []
-    penalty_plot_values = []
+    # Plot 2: Cloze Score (top-right)
+    ax2 = axes[0, 1]
     
     for j, dataset_name in enumerate(dataset_names):
         cloze_col = f'cloze_score_{dataset_name}'
         
-        # Plot cloze score
         if cloze_col in data.columns:
             mask = data[cloze_col].notna() & data['context_length'].notna()
             if mask.any():
                 values = data.loc[mask, cloze_col].tolist()
-                cloze_plot_values.extend(values)
                 ax2.plot(data.loc[mask, 'context_length'], values, 
                         marker=markers[j % len(markers)], color=colors[j % len(colors)],
-                        linewidth=3, markersize=6, label=f'{dataset_name} (cloze)', linestyle='-')
-        
-        
-    # Set primary axis
+                        linewidth=3, markersize=6, label=dataset_name, linestyle='-')
+    
     ax2.set_xscale('log')
     ax2.set_xlabel('Context Length')
-    ax2.set_ylabel('Cloze Score (Predictability)', color='black')
-    ax2.set_title('Degradation Metrics', fontweight='bold')
-    ax2.set_ylim(ranges['cloze_score'])
+    ax2.set_ylabel('Cloze Score (Predictability)')
+    ax2.set_title('Cloze Score (Lower is Better)', fontweight='bold')
+    if 'cloze_score' in ranges:
+        ax2.set_ylim(ranges['cloze_score'])
     ax2.grid(True, alpha=0.3)
+    ax2.legend(loc='best', fontsize=8)
     
-    # Combined legend
-    lines3, labels3 = ax2.get_legend_handles_labels()
-    ax2.legend(lines3, labels3, loc='best')
+    # Plot 3: Adjacent Coherence (bottom-left)
+    ax3 = axes[1, 0]
     
-    # Format x-axis labels for both plots
-    for ax in [ax1, ax2]:
+    for j, dataset_name in enumerate(dataset_names):
+        coherence_col = f'adjacent_coherence_{dataset_name}'
+        
+        if coherence_col in data.columns:
+            mask = data[coherence_col].notna() & data['context_length'].notna()
+            if mask.any():
+                values = data.loc[mask, coherence_col].tolist()
+                ax3.plot(data.loc[mask, 'context_length'], values, 
+                        marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                        linewidth=3, markersize=6, label=dataset_name, linestyle='-')
+    
+    ax3.set_xscale('log')
+    ax3.set_xlabel('Context Length')
+    ax3.set_ylabel('Adjacent Coherence')
+    ax3.set_title('Adjacent Coherence (Higher is Better)', fontweight='bold')
+    if 'adjacent_coherence' in ranges:
+        ax3.set_ylim(ranges['adjacent_coherence'])
+    ax3.grid(True, alpha=0.3)
+    ax3.legend(loc='best', fontsize=8)
+    
+    # Plot 4: Bigram Repetition Rate (bottom-right)
+    ax4 = axes[1, 1]
+    
+    for j, dataset_name in enumerate(dataset_names):
+        bigram_col = f'bigram_repetition_rate_{dataset_name}'
+        
+        if bigram_col in data.columns:
+            mask = data[bigram_col].notna() & data['context_length'].notna()
+            if mask.any():
+                values = data.loc[mask, bigram_col].tolist()
+                ax4.plot(data.loc[mask, 'context_length'], values, 
+                        marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                        linewidth=3, markersize=6, label=dataset_name, linestyle='-')
+    
+    ax4.set_xscale('log')
+    ax4.set_xlabel('Context Length')
+    ax4.set_ylabel('Bigram Repetition Rate')
+    ax4.set_title('Bigram Repetition Rate (Lower is Better)', fontweight='bold')
+    if 'bigram_repetition' in ranges:
+        ax4.set_ylim(ranges['bigram_repetition'])
+    ax4.grid(True, alpha=0.3)
+    ax4.legend(loc='best', fontsize=8)
+    
+    # Format x-axis labels for all plots
+    for ax in [ax1, ax2, ax3, ax4]:
         if len(data['context_length'].dropna()) > 0:
             unique_contexts = sorted(data['context_length'].dropna().unique())
             ax.set_xticks(unique_contexts)
@@ -707,6 +819,363 @@ def create_summary_analysis(data, dataset_names):
                         print(f"      Cloze change: {cloze_change:+.3f} ({'worse' if cloze_change > 0 else 'better'})")
                         print(f"      Vocab change: {vocab_change:+.3f} ({'worse' if vocab_change < 0 else 'better'})")
 
+def get_metric_data_with_errorbars(data, metric_column, dataset_name):
+    """ Extract metric data with pre-calculated standard deviations.
+    
+    Args:
+        data: DataFrame with the data
+        metric_column: Base metric column name (without dataset suffix)
+        dataset_name: Name of the dataset
+        
+    Returns:
+        Tuple of (context_lengths, values, std_devs) for plotting
+    """
+    value_col = f'{metric_column}_{dataset_name}'
+    std_col = f'{metric_column}_std'  # Check if std column exists
+    
+    if value_col not in data.columns:
+        return [], [], []
+    
+    # Filter out rows with missing data
+    mask = data[value_col].notna() & data['context_length'].notna()
+    filtered_data = data.loc[mask]
+    
+    if len(filtered_data) == 0:
+        return [], [], []
+    
+    context_lengths = filtered_data['context_length'].tolist()
+    values = filtered_data[value_col].tolist()
+    
+    # Use pre-calculated std if available, otherwise use zeros
+    if std_col in filtered_data.columns:
+        std_devs = filtered_data[std_col].fillna(0.0).tolist()
+    else:
+        std_devs = [0.0] * len(values)
+    
+    return context_lengths, values, std_devs
+
+def create_comparison_plots_with_errorbars(data, dataset_names, output_file='comparison.png', dpi=300, silent=False):
+    """ Create adaptive baseline comparison plots with error bars for multiple datasets.
+    
+    Creates two plots:
+    1. Creativity Plot: vocab_diversity + sentence_length_variance  
+    2. Degradation Plot: cloze_score + adaptive sentence length penalty
+    
+    Args:
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
+        output_file: Path for output PNG file
+        dpi: Resolution for output image
+        silent: If True, suppress print statements
+    """
+    # Set backend to Agg for headless operation
+    import matplotlib
+    matplotlib.use('Agg')
+    
+    # Calculate dynamic ranges - need to account for error bars
+    ranges = calculate_axis_ranges_with_errorbars(data, dataset_names)
+    
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    fig.suptitle('Model Performance Analysis: Creativity vs Degradation', fontsize=16, fontweight='bold')
+    
+    colors, markers = get_plot_colors_and_markers()
+    
+    # Plot 1: Creativity Metrics
+    ax1 = axes[0]
+    
+    for j, dataset_name in enumerate(dataset_names):
+        vocab_col = f'vocabulary_diversity_{dataset_name}'
+        
+        if vocab_col in data.columns:
+            contexts, means, stds = calculate_statistics_by_context(data, vocab_col)
+            if len(contexts) > 0:
+                ax1.errorbar(contexts, means, yerr=stds,
+                           marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                           linewidth=3, markersize=6, label=f'{dataset_name} (vocab)', 
+                           linestyle='-', capsize=5, capthick=2)
+    
+    # Set primary axis
+    ax1.set_xscale('log')
+    ax1.set_xlabel('Context Length')
+    ax1.set_ylabel('Vocabulary Diversity', color='black')
+    ax1.set_title('Creativity (Higher is Better)', fontweight='bold')
+    ax1.set_ylim(ranges['vocab_diversity'])
+    ax1.grid(True, alpha=0.3)
+    
+    # Combined legend
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    ax1.legend(lines1, labels1, loc='best')
+    
+    # Plot 2: Degradation Metrics
+    ax2 = axes[1]
+    
+    for j, dataset_name in enumerate(dataset_names):
+        cloze_col = f'cloze_score_{dataset_name}'
+        
+        # Plot cloze score
+        if cloze_col in data.columns:
+            contexts, means, stds = calculate_statistics_by_context(data, cloze_col)
+            if len(contexts) > 0:
+                ax2.errorbar(contexts, means, yerr=stds,
+                           marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                           linewidth=3, markersize=6, label=f'{dataset_name} (cloze)', 
+                           linestyle='-', capsize=5, capthick=2)
+    
+    # Set primary axis
+    ax2.set_xscale('log')
+    ax2.set_xlabel('Context Length')
+    ax2.set_ylabel('Cloze Score (Predictability)', color='black')
+    ax2.set_title('Degradation Metrics (Lower is Better)', fontweight='bold')
+    ax2.set_ylim(ranges['cloze_score'])
+    ax2.grid(True, alpha=0.3)
+    
+    # Combined legend
+    lines3, labels3 = ax2.get_legend_handles_labels()
+    ax2.legend(lines3, labels3, loc='best')
+    
+    # Format x-axis labels for both plots
+    for ax in [ax1, ax2]:
+        if len(data['context_length'].dropna()) > 0:
+            unique_contexts = sorted(data['context_length'].dropna().unique())
+            ax.set_xticks(unique_contexts)
+            ax.set_xticklabels([f'{int(x/1000)}K' if x >= 1000 else str(int(x)) 
+                               for x in unique_contexts])
+    
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+    if not silent:
+        print(f"Plot saved to: {output_file}")
+    plt.close()
+
+def calculate_axis_ranges_with_errorbars(data, dataset_names):
+    """ Calculate appropriate axis ranges accounting for error bars.
+    
+    Args:
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
+        
+    Returns:
+        Dictionary with calculated ranges for each metric
+    """
+    ranges = {}
+    
+    # Vocabulary diversity - account for error bars
+    vocab_values = []
+    vocab_bounds = []
+    
+    for dataset in dataset_names:
+        col = f'vocabulary_diversity_{dataset}'
+        if col in data.columns:
+            contexts, means, stds = calculate_statistics_by_context(data, col)
+            vocab_values.extend(means)
+            # Calculate bounds including error bars
+            for mean, std in zip(means, stds):
+                vocab_bounds.extend([mean - std, mean + std])
+    
+    if vocab_bounds:
+        vocab_min, vocab_max = min(vocab_bounds), max(vocab_bounds)
+        # Add some padding
+        vocab_range = vocab_max - vocab_min
+        padding = vocab_range * 0.05
+        
+        if vocab_min - padding > 0.20:
+            ranges['vocab_diversity'] = (0.20, 0.70)
+        else:
+            ranges['vocab_diversity'] = (vocab_min - padding, vocab_min + 0.45)
+    else:
+        ranges['vocab_diversity'] = (0.20, 0.70)
+    
+    # Cloze score - account for error bars
+    cloze_values = []
+    cloze_bounds = []
+    
+    for dataset in dataset_names:
+        col = f'cloze_score_{dataset}'
+        if col in data.columns:
+            contexts, means, stds = calculate_statistics_by_context(data, col)
+            cloze_values.extend(means)
+            # Calculate bounds including error bars
+            for mean, std in zip(means, stds):
+                cloze_bounds.extend([mean - std, mean + std])
+    
+    if cloze_bounds:
+        cloze_min, cloze_max = min(cloze_bounds), max(cloze_bounds)
+        # Add some padding
+        cloze_range = cloze_max - cloze_min
+        padding = cloze_range * 0.05
+        
+        if cloze_min - padding > 15:
+            ranges['cloze_score'] = (15, 40)
+        else:
+            ranges['cloze_score'] = (cloze_min - padding, cloze_min + 25)
+    else:
+        ranges['cloze_score'] = (15, 40)
+    
+    return ranges
+
+def create_detailed_metrics_plots_with_errorbars(data, dataset_names, output_file='detailed_metrics.png', dpi=300, silent=False):
+    """ Create detailed metrics plots with error bars for additional analysis.
+    
+    Creates four plots:
+    a) continuation_length (log scale)
+    b) density metrics (linear scale) 
+    c) ratio metrics (log scale 0-1)
+    d) avg_word_length (linear scale)
+    
+    Args:
+        data: Merged dataframe with all dataset metrics
+        dataset_names: List of dataset names
+        output_file: Path for output PNG file
+        dpi: Resolution for output image
+        silent: If True, suppress print statements
+    """
+    # Set backend to Agg for headless operation
+    import matplotlib
+    matplotlib.use('Agg')
+    
+    fig, axes = plt.subplots(2, 2, figsize=(17.5, 14))
+    fig.suptitle('Detailed Metrics Analysis', fontsize=16, fontweight='bold', y=0.95)
+    
+    colors, markers = get_plot_colors_and_markers()
+    
+    # Plot A: Continuation Length (log scale)
+    ax_a = axes[0, 0]
+    all_continuation_bounds = []
+    
+    for j, dataset_name in enumerate(dataset_names):
+        cont_col = f'continuation_length_{dataset_name}'
+        if cont_col in data.columns:
+            contexts, means, stds = calculate_statistics_by_context(data, cont_col)
+            if len(contexts) > 0:
+                all_continuation_bounds.extend([m - s for m, s in zip(means, stds)])
+                all_continuation_bounds.extend([m + s for m, s in zip(means, stds)])
+                ax_a.errorbar(contexts, means, yerr=stds,
+                            marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                            linewidth=3, markersize=6, label=dataset_name,
+                            capsize=4, capthick=1.5)
+    
+    ax_a.set_xscale('log')
+    ax_a.set_yscale('log')
+    ax_a.set_xlabel('Context Length')
+    ax_a.set_ylabel('Continuation Length (log scale)')
+    ax_a.set_title('Continuation Length')
+    ax_a.grid(True, alpha=0.3)
+    ax_a.legend(loc='best', fontsize=8)
+    
+    # Set y-range for continuation length with error bar padding
+    if all_continuation_bounds:
+        min_cont, max_cont = min(all_continuation_bounds), max(all_continuation_bounds)
+        ax_a.set_ylim(max(1, min_cont * 0.8), max_cont * 1.2)
+    
+    # Plot B: Density Metrics (linear scale)
+    ax_b = axes[0, 1]
+    density_metrics = ['comma_density', 'semicolon_density', 'question_density', 'exclamation_density']
+    all_density_bounds = []
+    
+    for metric in density_metrics:
+        for j, dataset_name in enumerate(dataset_names):
+            col = f'{metric}_{dataset_name}'
+            if col in data.columns:
+                contexts, means, stds = calculate_statistics_by_context(data, col)
+                if len(contexts) > 0:
+                    all_density_bounds.extend([m - s for m, s in zip(means, stds)])
+                    all_density_bounds.extend([m + s for m, s in zip(means, stds)])
+                    linestyle = ['-', '--', '-.', ':'][density_metrics.index(metric)]
+                    ax_b.errorbar(contexts, means, yerr=stds,
+                                marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                                linewidth=2, markersize=4, 
+                                label=f'{dataset_name} ({metric.replace("_density", "")})',
+                                linestyle=linestyle, capsize=3, capthick=1)
+    
+    ax_b.set_xscale('log')
+    ax_b.set_xlabel('Context Length')
+    ax_b.set_ylabel('Density')
+    ax_b.set_title('Punctuation Densities')
+    ax_b.grid(True, alpha=0.3)
+    
+    # Set y-range for density with error bar padding
+    if all_density_bounds:
+        max_density = max([b for b in all_density_bounds if b >= 0])  # Only positive bounds
+        ax_b.set_ylim(0, max_density * 1.1)
+    
+    # Plot C: Ratio Metrics (log scale 0-1)
+    ax_c = axes[1, 0]
+    ratio_metrics = ['function_word_ratio', 'unique_word_ratio_100', 'long_word_ratio']
+    
+    for metric in ratio_metrics:
+        for j, dataset_name in enumerate(dataset_names):
+            col = f'{metric}_{dataset_name}'
+            if col in data.columns:
+                contexts, means, stds = calculate_statistics_by_context(data, col)
+                if len(contexts) > 0:
+                    linestyle = ['-', '--', '-.'][ratio_metrics.index(metric)]
+                    ax_c.errorbar(contexts, means, yerr=stds,
+                                marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                                linewidth=2, markersize=4,
+                                label=f'{dataset_name} ({metric.replace("_ratio", "").replace("_", " ")})',
+                                linestyle=linestyle, capsize=3, capthick=1)
+    
+    ax_c.set_xscale('log')
+    ax_c.set_yscale('log')
+    ax_c.set_xlabel('Context Length')
+    ax_c.set_ylabel('Ratio (log scale)')
+    ax_c.set_title('Word Ratios')
+    ax_c.set_ylim(0.001, 1)
+    ax_c.grid(True, alpha=0.3)
+    
+    # Plot D: Average Word Length (linear scale)
+    ax_d = axes[1, 1]
+    all_word_length_bounds = []
+    
+    for j, dataset_name in enumerate(dataset_names):
+        wl_col = f'avg_word_length_{dataset_name}'
+        if wl_col in data.columns:
+            contexts, means, stds = calculate_statistics_by_context(data, wl_col)
+            if len(contexts) > 0:
+                all_word_length_bounds.extend([m - s for m, s in zip(means, stds)])
+                all_word_length_bounds.extend([m + s for m, s in zip(means, stds)])
+                ax_d.errorbar(contexts, means, yerr=stds,
+                            marker=markers[j % len(markers)], color=colors[j % len(colors)],
+                            linewidth=3, markersize=6, label=dataset_name,
+                            capsize=4, capthick=1.5)
+    
+    ax_d.set_xscale('log')
+    ax_d.set_xlabel('Context Length')
+    ax_d.set_ylabel('Average Word Length')
+    ax_d.set_title('Average Word Length')
+    ax_d.grid(True, alpha=0.3)
+    ax_d.legend(loc='best', fontsize=8)
+    
+    # Set y-range for word length with error bar padding
+    if all_word_length_bounds:
+        min_wl, max_wl = min(all_word_length_bounds), max(all_word_length_bounds)
+        wl_range = max_wl - min_wl
+        padding = wl_range * 0.1
+        ax_d.set_ylim(min_wl - padding, max_wl + padding)
+    
+    # Format x-axis labels for all plots
+    for ax in [ax_a, ax_b, ax_c, ax_d]:
+        if len(data['context_length'].dropna()) > 0:
+            unique_contexts = sorted(data['context_length'].dropna().unique())
+            ax.set_xticks(unique_contexts)
+            ax.set_xticklabels([f'{int(x/1000)}K' if x >= 1000 else str(int(x)) 
+                               for x in unique_contexts])
+    
+    # Add legends for plots B and C (which have multiple series per dataset)
+    ax_b.legend(loc='upper right', fontsize=8)
+    ax_c.legend(loc='upper right', fontsize=8)
+    
+    # Set equal aspect ratio for all subplots to make them more square
+    for ax in [ax_a, ax_b, ax_c, ax_d]:
+        ax.set_aspect('auto')
+    
+    # Adjust layout with proper spacing
+    plt.subplots_adjust(left=0.06, bottom=0.08, right=0.95, top=0.90, wspace=0.25, hspace=0.3)
+    plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+    if not silent:
+        print(f"Detailed metrics plot with error bars saved to: {output_file}")
+    plt.close()
+  
 def make_png(enhanced_results, output_file_path, silent=True):
     """ Generate PNG plots from enhanced_results data.
     
@@ -733,7 +1202,7 @@ def make_png(enhanced_results, output_file_path, silent=True):
         
         # Generate output filenames
         main_plot_file = f"{base_output_path}.png"
-        #detailed_plot_file = f"{base_output_path}_detailed.png"
+        plot_file_with_error_bars = f"{base_output_path}_stddev.png"
         
         # Create single-dataset merged format expected by plotting functions
         data = df.copy()
@@ -746,7 +1215,7 @@ def make_png(enhanced_results, output_file_path, silent=True):
         
         # Create plots
         create_comparison_plots(data, dataset_names, main_plot_file, silent=silent)
-        #create_detailed_metrics_plots(data, dataset_names, detailed_plot_file, silent=silent)
+        #create_comparison_plots_with_errorbars(data, dataset_names, plot_file_with_error_bars, silent=silent)
         
         return True
         
@@ -799,6 +1268,7 @@ def main():
         print(f"Datasets: {', '.join(dataset_names)}")
         
         create_comparison_plots(data, dataset_names, main_output_file)
+        #create_comparison_plots_with_errorbars(data, dataset_names, f"{main_output_file)
         # Detailed analysis
         #analyze_performance_ranges(data, dataset_names)
         

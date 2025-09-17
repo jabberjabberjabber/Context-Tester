@@ -6,7 +6,7 @@ import re
 import math
 import statistics
 from collections import Counter, defaultdict
-from typing import Any, Dict, List, Set, Tuple, Literal, TypeAlias
+from typing import Any, Dict, List, Set, Tuple, Literal, TypeAlias, Optional
 from bs4 import BeautifulSoup
 
 def load_easy_words(word_list_path: str = "easy_words.txt") -> Set[str]:
@@ -43,7 +43,7 @@ def initialize_word_list(word_list_path: str = "easy_words.txt") -> None:
 def compute_cloze_score(pct_unfamiliar_words: float, avg_sentence_length: float) -> float:
     """ Compute the Cloze score (Chall & Dale, 1995)
     
-    Formula: 64 - (95 × pct_unfamiliar_words) - (0.69 × avg_sentence_length)
+    Formula: 64 - (95 Ã— pct_unfamiliar_words) - (0.69 Ã— avg_sentence_length)
     """
     raw_result = 64 - (95 * pct_unfamiliar_words) - (0.69 * avg_sentence_length)
     return round(raw_result, 2)
@@ -119,7 +119,130 @@ def vocabulary_diversity(text: str) -> float:
     return len(unique_words) / len(words)
 
 # ================================
-# NEW DEGRADATION METRICS
+# SENTENCE TOKENIZATION
+# ================================
+
+def _extract_sentences(text: str) -> List[str]:
+    """ Extract sentences from text using the same approach as existing functions """
+    cleaned_text = text.replace("\n", " ").strip()
+    sentences = re.findall(r"\b[^.!?]+[.!?]*", cleaned_text, re.UNICODE)
+    return [s.strip() for s in sentences if s.strip()]
+
+# ================================
+# COHERENCE ANALYSIS
+# ================================
+
+def _cosine_similarity(vec1: List[float], vec2: List[float]) -> float:
+    """ Calculate cosine similarity between two vectors """
+    if not vec1 or not vec2 or len(vec1) != len(vec2):
+        return 0.0
+    
+    # Dot product
+    dot_product = sum(a * b for a, b in zip(vec1, vec2))
+    
+    # Magnitudes
+    magnitude1 = math.sqrt(sum(a * a for a in vec1))
+    magnitude2 = math.sqrt(sum(b * b for b in vec2))
+    
+    if magnitude1 == 0 or magnitude2 == 0:
+        return 0.0
+    
+    return dot_product / (magnitude1 * magnitude2)
+
+def calculate_coherence_metrics(text: str, api_client=None) -> Dict[str, float]:
+    """ Calculate semantic coherence metrics using sentence embeddings
+    
+    Args:
+        text: Input text to analyze
+        api_client: StreamingAPIClient instance with get_embeddings method
+    
+    Returns:
+        Dictionary containing coherence metrics, or zeros if API unavailable
+    """
+    if not api_client or not hasattr(api_client, 'get_embeddings'):
+        return {
+            'adjacent_coherence': 0.0,
+            'global_coherence': 0.0,
+            'local_coherence_3sent': 0.0,
+            'coherence_variance': 0.0
+        }
+    
+    sentences = _extract_sentences(text)
+    if len(sentences) < 2:
+        return {
+            'adjacent_coherence': 1.0,
+            'global_coherence': 1.0,
+            'local_coherence_3sent': 1.0,
+            'coherence_variance': 0.0
+        }
+    
+    # Get embeddings from API
+    embeddings = api_client.get_embeddings(sentences)
+    if not embeddings or len(embeddings) != len(sentences):
+        print("Warning: Could not get embeddings for coherence analysis")
+        return {
+            'adjacent_coherence': 0.0,
+            'global_coherence': 0.0,
+            'local_coherence_3sent': 0.0,
+            'coherence_variance': 0.0
+        }
+    
+    # 1. Adjacent sentence coherence (your original idea)
+    adjacent_similarities = []
+    for i in range(len(embeddings) - 1):
+        similarity = _cosine_similarity(embeddings[i], embeddings[i + 1])
+        adjacent_similarities.append(similarity)
+    
+    adjacent_coherence = statistics.mean(adjacent_similarities) if adjacent_similarities else 0.0
+    
+    # 2. Global coherence (each sentence vs document centroid)
+    if embeddings:
+        # Calculate document centroid
+        embedding_dim = len(embeddings[0])
+        centroid = [sum(emb[i] for emb in embeddings) / len(embeddings) 
+                   for i in range(embedding_dim)]
+        
+        global_similarities = []
+        for embedding in embeddings:
+            similarity = _cosine_similarity(embedding, centroid)
+            global_similarities.append(similarity)
+        
+        global_coherence = statistics.mean(global_similarities)
+    else:
+        global_coherence = 0.0
+    
+    # 3. Local coherence (3-sentence sliding windows)
+    if len(sentences) >= 3:
+        local_similarities = []
+        for i in range(len(sentences) - 2):
+            window_embeddings = embeddings[i:i+3]
+            # Average similarity within the window
+            window_sims = []
+            for j in range(len(window_embeddings)):
+                for k in range(j + 1, len(window_embeddings)):
+                    sim = _cosine_similarity(window_embeddings[j], window_embeddings[k])
+                    window_sims.append(sim)
+            
+            if window_sims:
+                local_similarities.append(statistics.mean(window_sims))
+        
+        local_coherence = statistics.mean(local_similarities) if local_similarities else 0.0
+    else:
+        local_coherence = adjacent_coherence
+    
+    # 4. Coherence variance (measure of consistency)
+    all_similarities = adjacent_similarities
+    coherence_variance = statistics.variance(all_similarities) if len(all_similarities) > 1 else 0.0
+    
+    return {
+        'adjacent_coherence': round(adjacent_coherence, 4),
+        'global_coherence': round(global_coherence, 4),
+        'local_coherence_3sent': round(local_coherence, 4),
+        'coherence_variance': round(coherence_variance, 4)
+    }
+
+# ================================
+# EXISTING DEGRADATION METRICS
 # ================================
 
 def calculate_repetition_metrics(text: str) -> Dict[str, float]:
@@ -311,11 +434,11 @@ def is_power_of_two(n: int) -> bool:
     return n > 0 and (n & (n - 1)) == 0
 
 # ================================
-# MAIN ANALYSIS FUNCTION
+# MAIN ANALYSIS FUNCTIONS
 # ================================
 
-def analyze_text_comprehensive(text: str) -> Dict[str, Any]:
-    """ Complete readability and degradation analysis """
+def analyze_text_comprehensive(text: str, api_client=None) -> Dict[str, Any]:
+    """ Complete readability and degradation analysis including coherence """
     if not text.strip():
         return {
             # Original metrics
@@ -327,14 +450,14 @@ def analyze_text_comprehensive(text: str) -> Dict[str, Any]:
             'sentence_count': 0,
             'sentence_length_variance': 0.0,
             'vocabulary_diversity': 0.0,
-            # New repetition metrics
+            # Repetition metrics
             'bigram_repetition_rate': 0.0,
             'trigram_repetition_rate': 0.0,
             'unique_word_ratio_100': 0.0,
-            # New entropy metrics
+            # Entropy metrics
             'word_entropy': 0.0,
             'char_entropy': 0.0,
-            # New stylometric metrics
+            # Stylometric metrics
             'comma_density': 0.0,
             'semicolon_density': 0.0,
             'question_density': 0.0,
@@ -342,10 +465,15 @@ def analyze_text_comprehensive(text: str) -> Dict[str, Any]:
             'avg_syllables_per_word': 0.0,
             'long_word_ratio': 0.0,
             'function_word_ratio': 0.0,
-            # New structural metrics
+            # Structural metrics
             'sentence_length_skewness': 0.0,
             'sentence_length_kurtosis': 0.0,
-            'avg_word_length': 0.0
+            'avg_word_length': 0.0,
+            # Coherence metrics
+            'adjacent_coherence': 0.0,
+            'global_coherence': 0.0,
+            'local_coherence_3sent': 0.0,
+            'coherence_variance': 0.0
         }
     
     # Calculate original metrics
@@ -360,11 +488,12 @@ def analyze_text_comprehensive(text: str) -> Dict[str, Any]:
     cleaned_text = text.replace("\n", " ").strip()
     sentences = re.findall(r"\b[^.!?]+[.!?]*", cleaned_text, re.UNICODE)
     
-    # Calculate new metrics
+    # Calculate all new metrics
     repetition_metrics = calculate_repetition_metrics(text)
     entropy_metrics = calculate_entropy_metrics(text)
     stylometric_metrics = calculate_stylometric_metrics(text)
     structural_metrics = calculate_structural_metrics(text)
+    coherence_metrics = calculate_coherence_metrics(text, api_client)
     
     # Combine all metrics
     result = {
@@ -379,11 +508,12 @@ def analyze_text_comprehensive(text: str) -> Dict[str, Any]:
         'vocabulary_diversity': round(vocab_diversity, 4)
     }
     
-    # Add new metrics
+    # Add all new metrics
     result.update(repetition_metrics)
     result.update(entropy_metrics)
     result.update(stylometric_metrics)
     result.update(structural_metrics)
+    result.update(coherence_metrics)
     
     return result
 

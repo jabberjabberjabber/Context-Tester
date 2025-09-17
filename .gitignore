@@ -14,3 +14,6 @@ FTX - Bankman & Fried Complaint - Sydney Snower.pdf
 /data
 /ablit-test
 /good_tests
+*.gguf
+/muse
+/results

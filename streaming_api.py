@@ -22,6 +22,53 @@ class StreamingAPIClient:
         
         if api_password:
             self.headers["Authorization"] = f"Bearer {api_password}"
+    
+    def get_embeddings(self, texts: List[str], model: str = "text-embedding-ada-002") -> Optional[List[List[float]]]:
+        """ Get embeddings for a list of texts using OpenAI-compatible API
+        
+        Args:
+            texts: List of strings to embed
+            model: Embedding model name (API may ignore this)
+        
+        Returns:
+            List of embedding vectors, or None if API call fails
+        """
+        if not texts:
+            return None
+            
+        try:
+            # Use same base URL but with embeddings endpoint
+            base_url = self.api_url.replace('/v1/chat/completions', '')
+            embeddings_url = f"{base_url}/v1/embeddings"
+            
+            payload = {
+                "input": texts,
+                "model": model
+            }
+            
+            response = requests.post(
+                embeddings_url,
+                json=payload,
+                headers={"Content-Type": "application/json", **{k: v for k, v in self.headers.items() if k == "Authorization"}},
+                timeout=60
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                if "data" in data:
+                    # Sort by index to maintain order
+                    embeddings = sorted(data["data"], key=lambda x: x.get("index", 0))
+                    return [item["embedding"] for item in embeddings]
+                else:
+                    print("No embedding data in API response")
+                    return None
+            else:
+                print(f"Embeddings API error {response.status_code}: {response.text}")
+                return None
+                
+        except Exception as e:
+            print(f"Error getting embeddings: {e}")
+            return None
             
     def count_tokens(self, text: str) -> int:
         base_url = self.api_url.replace('v1/chat/completions', '')
@@ -114,7 +161,7 @@ class StreamingAPIClient:
                     f"{base_url}/api/extra/tokencount",
                     json={"prompt": chunk},
                     headers={"Content-Type": "application/json"},
-                    timeout=30
+                    timeout=9999
                 )
                 
                 if response.status_code == 200:
@@ -243,7 +290,7 @@ class StreamingAPIClient:
                 json=payload,
                 headers=self.headers,
                 stream=True,
-                timeout=300
+                timeout=999
             )
             
             for line in response.iter_lines():
@@ -274,4 +321,3 @@ class StreamingAPIClient:
         except Exception as e:
             print(f"\nError in generation: {str(e)}")
             return ""
-
