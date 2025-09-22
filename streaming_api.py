@@ -2,6 +2,7 @@ from typing import Dict, List, Optional, Set, Any, Literal, TypeAlias
 import json
 import requests
 from find_last_sentence import find_last_sentence_ending
+from chunker_regex import chunk_regex
 
 # ================================
 # API CLIENT FOR TEXT GENERATION
@@ -92,26 +93,31 @@ class StreamingAPIClient:
             return None
         
             
-    def prune_text(self, text: str, max_context: int = 32768):
+    def prune_text(self, text: str, max_context: int = 32768, total_tokens: int = 64536):
         """ Get max amount of text that fits into a natural breakpoint
         
         Uses binary search over chunk boundaries to find the largest amount
         of text that fits within max_context tokens when chunked naturally.
         """
         
-        total_tokens = self.count_tokens(text)
-        if total_tokens < max_context:
-            print(f"Full text ({total_tokens:,} tokens) fits within max context ({max_context:,})")
-            return text
-
+        #total_tokens = self.count_tokens(text)
+        if total_tokens >= max_context:
+            pass
+            #print(f"Full text ({total_tokens:,} tokens) has enough tokens for max content ({max_context:,} tokens)")
+            #return text
+        else:
+            #print(f"Full text ({total_tokens:,} tokens) does not have enough tokens for max context ({max_context:,} tokens). Lower max context or use a larger text.")
+            return None
+            
         print(f"Pruning text from {total_tokens:,} tokens to fit {max_context:,} tokens at natural boundaries...")
         
         # Get all chunk boundaries
+        #print(f"text: {text}")
         matches = list(chunk_regex.finditer(text))
         if not matches:
             print("Warning: No regex matches found, using character-based truncation")
             # Fallback: truncate at max_context * 4 characters (rough estimate)
-            return text[:max_context * 4]
+            return text[:max_context * 2]
         
         print(f"Found {len(matches)} natural chunks to work with")
         
@@ -190,9 +196,54 @@ class StreamingAPIClient:
         print(f"Total tokens collected: {len(all_token_ids):,}")
         return all_token_ids
     
+    def tokens_to_text_batched(self, token_ids: List[int], chunk_size: int = 45000) -> str:
+        """ Detokenize large token array by batching API calls, return text """
+        
+        
+        base_url = self.api_url.replace('/v1/chat/completions', '')
+        all_text = []
+        
+        # Split text into manageable chunks
+        chunks = [token_ids[i:i+chunk_size] for i in range(0, len(token_ids), chunk_size)]
+        
+        print(f"Detokenizing text in {len(chunks)} chunks...")
+        
+        for i, chunk in enumerate(chunks, 1):
+            try:
+                response = requests.post(
+                    f"{base_url}/api/extra/detokenize",
+                    json={"ids": chunk},
+                    headers={"Content-Type": "application/json"},
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    #print(data)
+                    if  "result" in data:
+                        chunk_text = data["result"]
+                        all_text.extend(chunk_text)
+                        print(f"  Chunk {i}/{len(chunks)}: {len(chunk_text)} words")
+                    else:
+                        print(f"Token detokenize failed: success=False")
+                        return ""
+                else:
+                    print(f"Token detokenize failed: {response.status_code}")
+                    return ""
+                
+            except Exception as e:
+                print(f"  Chunk {i}/{len(chunks)}: Error {e}")
+                # Fallback estimation
+                
+        #print(f"Total ollected: {len(all_token_ids):,}")
+        text = "".join(all_text)
+        #print(text)
+        return text
+        
     def tokens_to_text(self, token_ids: List[int]) -> str:
         """ Convert token IDs back to text via API """
         if not token_ids:
+            print(f"No token ids!")
             return ""
         
         try:
@@ -206,6 +257,7 @@ class StreamingAPIClient:
             
             if response.status_code == 200:
                 data = response.json()
+                print(data)
                 if data.get("success", False):
                     return data.get("result", "")
                 else:

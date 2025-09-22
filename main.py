@@ -34,7 +34,7 @@ from readability_tests import (
 )
 
 from generate_plot import make_png
-from chunker_regex import chunk_regex
+
 from find_last_sentence import find_last_sentence_ending
 
 from requests.exceptions import RequestException
@@ -57,7 +57,12 @@ warnings.filterwarnings("ignore", category=UserWarning, module="bs4")
 def normalize_content(content: str) -> str:
     """ Convert fixed-width text and normalize characters """
     content = unicodedata.normalize('NFKC', content)
-    content = content.replace('--', '—')             
+    content = content.replace('--', '—')
+    
+    # Normalize quotes to straight quotes (optional)
+    content = content.replace('"', '"').replace('"', '"')
+    content = content.replace(''', "'").replace(''', "'")
+    
     text = content.replace('\r\n', '\n').replace('\r', '\n')
 
     paragraphs = text.split('\n\n')
@@ -95,32 +100,26 @@ def prepare_working_tokens(text: str, max_context: int, client: StreamingAPIClie
     Returns:
         List of tokens for testing
     """
-    print(f"\n{'='*60}")
-    print("PREPARING TOKENIZED TEXT")
-    print(f"{'='*60}")
-    
-    working_size = max_context 
-    pruned_text = client.prune_text(text, max_context)
-    
-    # Tokenize entire text 
-    all_tokens = client.tokenize_text_batched(pruned_text)
-    
-    if not all_tokens:
-        raise ValueError("Failed to tokenize text")
-    
-    total_tokens = len(all_tokens)
-    print(f"Total tokens in reference text: {total_tokens:,}")
-    
-    # Check if we have enough tokens
+
     min_required = int(max_context * 1.2)
-    if total_tokens < min_required:
-        raise ValueError(f"Insufficient text. Need at least {min_required:,} tokens, got {total_tokens:,} after pruning")
     
-    # Take the last max_context tokens as our working set
-    working_tokens = all_tokens[-min_required:]
-    print(f"Working with {len(working_tokens):,} tokens for testing")
+    # Get the working portion first
+    all_tokens = client.tokenize_text_batched(text)
     
-    return working_tokens
+    if len(all_tokens) < min_required:
+        # Handle repetition case
+        repeats_needed = (min_required // len(all_tokens)) + 1
+        working_tokens = (all_tokens * repeats_needed)[:min_required]
+    else:
+        working_tokens = all_tokens[:min_required]
+    #print(f"Tokens: {working_tokens}")
+    # Convert back to text and THEN prune with regex
+    working_text = client.tokens_to_text_batched(working_tokens)
+    pruned_text = client.prune_text(working_text, max_context, len(working_tokens))
+    
+    # Final tokenization
+    final_tokens = client.tokenize_text_batched(pruned_text)
+    return final_tokens
 
 # ================================
 # CONTEXT GENERATION FUNCTIONS
@@ -192,7 +191,7 @@ def build_context_window(working_tokens: List[str], context_length: int,
     """
     if context_length > len(working_tokens):
         # Use all available working tokens
-        context_text = client.tokens_to_text(working_tokens)
+        context_text = client.tokens_to_text_batched(working_tokens)
         return context_text
     
     # Adjust context length to account for generation tokens
@@ -202,7 +201,7 @@ def build_context_window(working_tokens: List[str], context_length: int,
     
     # Convert tokens to text
     target_tokens = working_tokens[-adjusted_length:]
-    context_text = client.tokens_to_text(target_tokens)
+    context_text = client.tokens_to_text_batched(target_tokens)
     
     print(f"  Context window: {adjusted_length:,} tokens")
     return context_text
@@ -250,6 +249,10 @@ def run_benchmarks(context: str, rounds: int, client: StreamingAPIClient,
         
         if not continuation:
             print(f"WARNING: No continuation generated for round {round_num + 1}")
+            continue
+
+        if client.count_tokens(continuation) < (generation_params['max_tokens'] * 0.8):
+            print(f"Not enough tokens generated for round {round_num + 1}")
             continue
         
         round_end_time = datetime.now()
@@ -579,7 +582,157 @@ def analyze_degradation_trends(results: List[dict], metadata: dict) -> dict:
     }
     
     return analysis
-
+    
+def reanalyze(input_dir: Path, client: StreamingAPIClient, model_id: Optional[str] = None) -> Path:
+    """ Re-analyze existing results using stored continuation texts
+    
+    Args:
+        input_dir: Directory containing context_*_results.json files  
+        client: API client for token counting and text analysis
+        model_id: Optional model identifier for new result filenames
+        
+    Returns:
+        Path to new output directory with reanalyzed results
+    """
+    print(f"\n{'='*60}")
+    print("RE-ANALYZING EXISTING RESULTS")
+    print(f"{'='*60}")
+    print(f"Input directory: {input_dir}")
+    
+    # Load original metadata
+    metadata_file = input_dir / "metadata.json"
+    if not metadata_file.exists():
+        raise ValueError(f"No metadata found in {input_dir}")
+    
+    with open(metadata_file, 'r', encoding='utf-8') as f:
+        original_metadata = json.load(f)
+    
+    # Create new output directory for reanalyzed results
+    experiment_meta = original_metadata.get('experiment_metadata', {})
+    model_name = experiment_meta.get('model_name', 'unknown')
+    text_name = experiment_meta.get('source_text_name', 'unknown')
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    
+    # Create output directory with "reanalyzed" suffix
+    clean_model = model_name.replace('/', '-').replace('\\', '-').replace(':', '-')
+    clean_text = text_name.replace('/', '-').replace('\\', '-').replace(':', '-')
+    dir_name = f"{clean_model}-{clean_text}-reanalyzed-{timestamp}"
+    output_dir = Path("results") / dir_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Output directory: {output_dir}")
+    
+    # Update metadata for reanalysis
+    new_metadata = original_metadata.copy()
+    new_metadata['reanalysis_metadata'] = {
+        'original_directory': str(input_dir),
+        'reanalysis_time': datetime.now().isoformat(),
+        'reanalysis_model_id': model_id,
+        'analysis_method': 'reanalyzed_from_stored_continuations'
+    }
+    
+    # Load all context result files
+    context_files = list(input_dir.glob("context_*_results.json"))
+    if not context_files:
+        raise ValueError(f"No context results found in {input_dir}")
+    
+    print(f"Found {len(context_files)} context result files to reanalyze")
+    
+    # Process each context file
+    successful_contexts = 0
+    
+    for context_file in sorted(context_files):
+        print(f"\nReanalyzing: {context_file.name}")
+        
+        with open(context_file, 'r', encoding='utf-8') as f:
+            context_data = json.load(f)
+        
+        context_length = context_data['context_length']
+        context_info = context_data['context_info']
+        generation_params = context_data['generation_params']
+        original_rounds = context_data.get('individual_rounds', [])
+        
+        if not original_rounds:
+            print(f"  No rounds found in {context_file.name}, skipping")
+            continue
+        
+        print(f"  Context length: {context_length:,} tokens")
+        print(f"  Reanalyzing {len(original_rounds)} rounds...")
+        
+        # Reanalyze each round
+        reanalyzed_rounds = []
+        
+        for round_data in original_rounds:
+            continuation_text = round_data.get('continuation_text', '')
+            
+            if not continuation_text:
+                print(f"    Warning: No continuation text in round {round_data.get('round_number', '?')}")
+                continue
+            
+            try:
+                # Run fresh analysis on the stored continuation text
+                new_analysis = analyze_text_comprehensive(continuation_text, client)
+                
+                # Create new round result with updated analysis
+                new_round_data = {
+                    'round_number': round_data.get('round_number'),
+                    'continuation_length': len(continuation_text),
+                    'continuation_tokens': client.count_tokens(continuation_text),
+                    'generation_time_seconds': round_data.get('generation_time_seconds'),
+                    'timestamp': round_data.get('timestamp'),
+                    'continuation_text': continuation_text,
+                    'reanalyzed_timestamp': datetime.now().isoformat(),
+                    **new_analysis
+                }
+                
+                reanalyzed_rounds.append(new_round_data)
+                
+            except Exception as e:
+                print(f"    Warning: Failed to reanalyze round {round_data.get('round_number', '?')}: {e}")
+                continue
+        
+        if not reanalyzed_rounds:
+            print(f"  No successful reanalysis for {context_file.name}")
+            continue
+        
+        # Save reanalyzed results for this context
+        save_context_results(output_dir, context_length, context_info, reanalyzed_rounds, generation_params)
+        
+        # Print summary of reanalyzed results
+        averaged = average_results(reanalyzed_rounds)
+        print(f"  Reanalyzed Results (n={len(reanalyzed_rounds)}):")
+        print(f"    Cloze Score: {averaged['cloze_score']:6.2f}")
+        if 'cloze_score_std' in averaged:
+            print(f"    (±{averaged['cloze_score_std']:4.2f})")
+        print(f"    Reading Level: {averaged['reading_level']:>6}")
+        print(f"    Vocabulary Diversity: {averaged['vocabulary_diversity']:5.3f}")
+        if 'vocab_diversity_std' in averaged:
+            print(f"    (±{averaged['vocab_diversity_std']:5.3f})")
+        
+        successful_contexts += 1
+    
+    # Update metadata with reanalysis completion info
+    new_metadata['reanalysis_metadata']['successful_contexts'] = successful_contexts
+    new_metadata['reanalysis_metadata']['total_contexts'] = len(context_files)
+    
+    # Save updated metadata
+    save_experiment_metadata(output_dir, new_metadata)
+    
+    print(f"\n{'='*60}")
+    print("REANALYSIS COMPLETE")
+    print(f"{'='*60}")
+    print(f"Successfully reanalyzed {successful_contexts}/{len(context_files)} context lengths")
+    print(f"Results saved to: {output_dir}")
+    
+    # Run full analysis on reanalyzed results
+    if successful_contexts >= 2:
+        print(f"\nRunning degradation analysis on reanalyzed data...")
+        run_analysis(output_dir, model_id)
+    else:
+        print(f"Insufficient reanalyzed data for trend analysis")
+    
+    return output_dir
+    
 def print_results_table(results: List[dict]):
     """ Print formatted results table """
     print(f"\nFULL RESULTS:")
@@ -750,19 +903,26 @@ Examples:
   python main.py text.txt --max-tokens 1024 --rep-pen 1.05 --min-p 0.05
   python main.py novel.txt --start-context 8192  # Skip testing small contexts
   python main.py --analyze results/model-text-20241201-123456  # Analyze existing results
+  python main.py --reanalyze results/model-text-20241201-123456  # Reanalyze stored continuations
 """
     )
     
     parser.add_argument(
         'input_file',
         nargs='?',
-        help='Path to reference text file (any format supported by extractous) OR results directory for analysis'
+        help='Path to reference text file (any format supported by extractous) OR results directory for analysis/reanalysis'
     )
     
     parser.add_argument(
         '--analyze',
         action='store_true',
         help='Run analysis on existing results directory'
+    )
+    
+    parser.add_argument(
+        '--reanalyze', 
+        action='store_true',
+        help='Re-run text analysis on stored continuation texts from existing results directory'
     )
     
     parser.add_argument(
@@ -873,7 +1033,21 @@ Examples:
     )
     
     args = parser.parse_args()
-    
+    if args.reanalyze:
+        if not args.input_file or not Path(args.input_file).exists():
+            print("Error: Must specify valid results directory for reanalysis")
+            return 1
+        
+        try:
+            results_dir = Path(args.input_file)
+            client = StreamingAPIClient(args.api_url, args.api_password)
+            initialize_word_list(args.word_list)
+            reanalyze(results_dir, client, args.model_id)
+            return 0
+        except Exception as e:
+            print(f"Reanalysis failed: {e}")
+            return 1
+        
     if args.analyze:
         if not args.input_file or not Path(args.input_file).exists():
             print("Error: Must specify valid results directory for analysis")
@@ -938,25 +1112,28 @@ Examples:
         
         # Load and prepare text
         reference_text = load_reference_text(args.input_file)
-        
-        max_context = args.max_context or client.get_max_context_length()
+        if args.max_context is not None:
+            max_context = min(args.max_context, client.get_max_context_length())
+        else:
+            max_context = client.get_max_context_length()
         metadata['experiment_metadata']['max_context'] = max_context
         
-        working_tokens = prepare_working_tokens(reference_text, max_context, client)
-        
-        # Analyze baseline readability
-        baseline_text = client.tokens_to_text(working_tokens[-5000:] if len(working_tokens) > 5000 else working_tokens)
-        baseline_analysis = analyze_text_comprehensive(baseline_text, client)
-        print(f"\nBaseline text readability (from continuation point area):")
-        print(f"  Cloze Score: {baseline_analysis['cloze_score']}")
-        print(f"  Reading Level: {baseline_analysis['reading_level']}")
-        print(f"  Vocabulary Diversity: {baseline_analysis['vocabulary_diversity']}")
-        
-        metadata['baseline_analysis'] = baseline_analysis
-        
-        # Generate context lengths
         context_lengths = generate_context_lengths(max_context, args.divisions, args.start_context)
         metadata['context_lengths'] = context_lengths
+        
+        working_tokens = prepare_working_tokens(reference_text, max_context, client)
+        # Analyze baseline
+        #print(f"\nGenerating embeddings for sample text...")
+        #baseline_text = client.tokens_to_text(working_tokens[-args.max_tokens:] if len(working_tokens) > args.max_tokens else working_tokens)
+        
+        #baseline_analysis = analyze_text_comprehensive(baseline_text, client)
+        #print(f"\nBaseline text Analysis (from continuation point area):")
+        
+        #print(f"  Cloze Score: {baseline_analysis['cloze_score']}")
+        #print(f"  Reading Level: {baseline_analysis['reading_level']}")
+        #print(f"  Vocabulary Diversity: {baseline_analysis['vocabulary_diversity']}")
+        
+        #metadata['baseline_analysis'] = baseline_analysis
         
         # Save initial metadata
         save_experiment_metadata(output_dir, metadata)
