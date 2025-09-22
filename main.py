@@ -973,7 +973,7 @@ Examples:
     parser.add_argument(
         '--max-tokens',
         type=int,
-        default=1024,
+        default=512,
         help='Maximum tokens to generate (default: 1024)'
     )
     
