@@ -138,7 +138,7 @@ def generate_context_lengths(max_context: int, divisions: int = 1, start_context
     """
     # Generate base powers of 2: 1k, 2k, 4k, 8k, 16k, 32k, etc.
     tiers = []
-    power = 10  # Start at 2^10 = 1024
+    power = 11  # Start at 2^11 = 2048
     
     while True:
         length = 2 ** power
@@ -178,30 +178,26 @@ def generate_context_lengths(max_context: int, divisions: int = 1, start_context
 
 def build_context_window(working_tokens: List[str], context_length: int, 
                         client: StreamingAPIClient, max_tokens: int) -> str:
-    """ Build context window from working tokens using backward expansion
+    """ Build context window from working tokens using backward expansion """
     
-    Args:
-        working_tokens: List of tokens to work with
-        context_length: Number of tokens to include in context
-        client: API client for token operations
-        max_tokens: Maximum tokens for generation (to adjust context)
-        
-    Returns:
-        Context text for this tier, trimmed to natural boundaries
-    """
-    if context_length > len(working_tokens):
-        # Use all available working tokens
-        context_text = client.tokens_to_text_batched(working_tokens)
-        return context_text
     
-    # Adjust context length to account for generation tokens
-    adjusted_length = context_length
-    if context_length >= (max_tokens * 2):
-        adjusted_length = context_length - max_tokens
+    # Calculate overhead tokens for system message, instruction, formatting
+    system_message = "You are a skilled novelist continuing a story."
+    instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
+    
+    overhead_tokens = client.count_tokens(system_message) + client.count_tokens(instruction) + 20  # +20 for formatting
+    
+    adjusted_length = context_length - max_tokens - overhead_tokens
+    
+    print(f"  Reserved {overhead_tokens} tokens for overhead, {max_tokens} for completion")
+    
     
     # Convert tokens to text
     target_tokens = working_tokens[-adjusted_length:]
     context_text = client.tokens_to_text_batched(target_tokens)
+    
+    if not context_text:
+        return None
     
     print(f"  Context window: {adjusted_length:,} tokens")
     return context_text
@@ -277,7 +273,8 @@ def run_benchmarks(context: str, rounds: int, client: StreamingAPIClient,
         round_results.append(result)
         
         if rounds > 1:
-            print(f"    Cloze: {analysis['cloze_score']:6.2f}, "
+            print(f""
+                  f"    Cloze: {analysis['cloze_score']:6.2f}, "
                   f"Level: {analysis['reading_level']:>6}, "
                   f"Vocab: {analysis['vocabulary_diversity']:5.3f}")
     
@@ -944,13 +941,6 @@ Examples:
     )
     
     parser.add_argument(
-        '--max-context',
-        type=int,
-        default=None,
-        help='Maximum context length to test (auto-detect if not specified)'
-    )
-    
-    parser.add_argument(
         '--rounds',
         type=int,
         default=3,
@@ -1032,6 +1022,19 @@ Examples:
         help='Maximum retries for outlier contexts (default: 2)'
     )
     
+    parser.add_argument(
+        '--tokenizer-model',
+        default=None,
+        help='HuggingFace tokenizer model name (e.g., "meta-llama/Llama-3.1-8B-Instruct")'
+    )
+
+    parser.add_argument(
+        '--max-context',
+        type=int,
+        default=None,
+        help='Maximum context length (required when using --tokenizer-model)'
+    )
+    
     args = parser.parse_args()
     if args.reanalyze:
         if not args.input_file or not Path(args.input_file).exists():
@@ -1040,7 +1043,12 @@ Examples:
         
         try:
             results_dir = Path(args.input_file)
-            client = StreamingAPIClient(args.api_url, args.api_password)
+            client = StreamingAPIClient(
+                args.api_url, 
+                args.api_password,
+                tokenizer_model=args.tokenizer_model,
+                max_context=args.max_context
+            )
             initialize_word_list(args.word_list)
             reanalyze(results_dir, client, args.model_id)
             return 0
@@ -1072,10 +1080,16 @@ Examples:
     try:
         # Initialize components
         print("=" * 60)
-        print("MODEL READABILITY DEGRADATION TEST - INCREMENTAL STATE SAVING")
+        print("MODEL READABILITY DEGRADATION TEST")
         print("=" * 60)
         
-        client = StreamingAPIClient(args.api_url, args.api_password)
+        client = StreamingAPIClient(
+            args.api_url, 
+            args.api_password,
+            tokenizer_model=args.tokenizer_model,
+            model_name=args.model_name,
+            max_context=args.max_context
+        )
         initialize_word_list(args.word_list)
         
         model_name = args.model_name or client.get_model_name() or "unknown-model"
@@ -1122,6 +1136,7 @@ Examples:
         metadata['context_lengths'] = context_lengths
         
         working_tokens = prepare_working_tokens(reference_text, max_context, client)
+        
         # Analyze baseline
         #print(f"\nGenerating embeddings for sample text...")
         #baseline_text = client.tokens_to_text(working_tokens[-args.max_tokens:] if len(working_tokens) > args.max_tokens else working_tokens)
@@ -1168,7 +1183,7 @@ Examples:
             
             if not context:
                 print(f"WARNING: Failed to build context for {context_length} tokens")
-                continue
+                break
             
             context_info = {
                 'context_length_target': context_length,

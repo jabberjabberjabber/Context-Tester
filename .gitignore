@@ -28,3 +28,4 @@ Neona-12B.Q6_K-middlemarch.txt-swa.png
 Neona-12B.Q6_K-middlemarch.txt.png
 Neona-12B.Q6_K-quantkv2_with-Neona-12B.Q6_K-quantkv1-Neona-12B.Q6_K-swa-Neona-12B.Q6_K.png
 Neona-12B.Q6_K.png
+delete_empty_tests.ps1

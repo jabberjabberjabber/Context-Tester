@@ -9,9 +9,24 @@ from chunker_regex import chunk_regex
 # ================================
 
 class StreamingAPIClient:
-    """ Client for generating text continuations via streaming API """
+    """ Client for generating text continuations via streaming API 
     
-    def __init__(self, api_url: str, api_password: Optional[str] = None):
+    Supports both KoboldCpp (with API tokenization) and NVIDIA NIM
+    (with local HuggingFace tokenizer).
+    """
+    
+    def __init__(self, api_url: str, api_password: Optional[str] = None,
+                 tokenizer_model: Optional[str] = None, model_name: Optional[str] = None,
+                 max_context: Optional[int] = None):
+        """ Initialize API client
+        
+        Args:
+            api_url: Base URL for the API
+            api_password: Optional API key/bearer token
+            tokenizer_model: HuggingFace tokenizer name (for NVIDIA NIM)
+            model_name: Model name (will try as tokenizer if tokenizer_model not provided)
+            max_context: Maximum context length (required for NVIDIA NIM)
+        """
         self.api_url = api_url
         if not self.api_url.endswith('/v1/chat/completions'):
             self.api_url = f"{self.api_url.rstrip('/')}/v1/chat/completions"
@@ -23,13 +38,33 @@ class StreamingAPIClient:
         
         if api_password:
             self.headers["Authorization"] = f"Bearer {api_password}"
+        self.model_name = model_name
+        # Setup local tokenizer for NVIDIA NIM (or other APIs without tokenization endpoints)
+        tokenizer_to_load = tokenizer_model or model_name
+        
+        if tokenizer_to_load:
+            try:
+                from transformers import AutoTokenizer
+                self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_to_load)
+                self._max_context = max_context
+                print(f"Loaded local tokenizer: {tokenizer_to_load}")
+                if max_context:
+                    print(f"Using configured max context: {max_context:,} tokens")
+            except Exception as e:
+                print(f"Failed to load tokenizer '{tokenizer_to_load}': {e}")
+                print("Falling back to API tokenization (KoboldCpp mode)")
+                self.tokenizer = None
+                self._max_context = None
+        else:
+            self.tokenizer = None
+            self._max_context = None
     
-    def get_embeddings(self, texts: List[str], model: str = "text-embedding-ada-002") -> Optional[List[List[float]]]:
+    def get_embeddings(self, texts: List[str], model: str = "baai/bge-m3") -> Optional[List[List[float]]]:
         """ Get embeddings for a list of texts using OpenAI-compatible API
         
         Args:
             texts: List of strings to embed
-            model: Embedding model name (API may ignore this)
+            model: Embedding model name (default for NVIDIA NIM)
         
         Returns:
             List of embedding vectors, or None if API call fails
@@ -44,14 +79,16 @@ class StreamingAPIClient:
             
             payload = {
                 "input": texts,
-                "model": model
+                "model": model,
+                "encoding_format": "float",
+                "truncate": "NONE"
             }
             
-            response = requests.post(
+            response = self._make_request_with_retry(
                 embeddings_url,
-                json=payload,
-                headers={"Content-Type": "application/json", **{k: v for k, v in self.headers.items() if k == "Authorization"}},
-                timeout=60
+                payload=payload,
+                #headers={"Content-Type": "application/json", **{k: v for k, v in self.headers.items() if k == "Authorization"}},
+                
             )
             
             if response.status_code == 200:
@@ -72,6 +109,15 @@ class StreamingAPIClient:
             return None
             
     def count_tokens(self, text: str) -> int:
+        """ Count tokens in text
+        
+        Uses local tokenizer if available, otherwise falls back to API.
+        """
+        if self.tokenizer:
+            # Local tokenization
+            return len(self.tokenizer.encode(text, add_special_tokens=True))
+        
+        # KoboldCpp API fallback
         base_url = self.api_url.replace('v1/chat/completions', '')
         try:
             response = requests.post(
@@ -100,19 +146,14 @@ class StreamingAPIClient:
         of text that fits within max_context tokens when chunked naturally.
         """
         
-        #total_tokens = self.count_tokens(text)
         if total_tokens >= max_context:
             pass
-            #print(f"Full text ({total_tokens:,} tokens) has enough tokens for max content ({max_context:,} tokens)")
-            #return text
         else:
-            #print(f"Full text ({total_tokens:,} tokens) does not have enough tokens for max context ({max_context:,} tokens). Lower max context or use a larger text.")
             return None
             
         print(f"Pruning text from {total_tokens:,} tokens to fit {max_context:,} tokens at natural boundaries...")
         
         # Get all chunk boundaries
-        #print(f"text: {text}")
         matches = list(chunk_regex.finditer(text))
         if not matches:
             print("Warning: No regex matches found, using character-based truncation")
@@ -149,10 +190,20 @@ class StreamingAPIClient:
         return best_text
         
     def tokenize_text_batched(self, text: str, chunk_size: int = 45000) -> List[int]:
-        """ Tokenize large text by batching API calls, return token IDs """
+        """ Tokenize large text by batching API calls, return token IDs 
+        
+        Uses local tokenizer if available (no batching needed).
+        """
         if not text or not text.strip():
             return []
         
+        if self.tokenizer:
+            # Local tokenization - fast, no batching needed
+            token_ids = self.tokenizer.encode(text, add_special_tokens=True)
+            print(f"Tokenized {len(token_ids):,} tokens locally")
+            return token_ids
+        
+        # KoboldCpp API fallback with batching
         base_url = self.api_url.replace('/v1/chat/completions', '')
         all_token_ids = []
         
@@ -197,9 +248,20 @@ class StreamingAPIClient:
         return all_token_ids
     
     def tokens_to_text_batched(self, token_ids: List[int], chunk_size: int = 45000) -> str:
-        """ Detokenize large token array by batching API calls, return text """
+        """ Detokenize large token array by batching API calls, return text 
         
+        Uses local tokenizer if available (no batching needed).
+        """
+        if not token_ids:
+            return ""
         
+        if self.tokenizer:
+            # Local detokenization - fast, no batching needed
+            text = self.tokenizer.decode(token_ids, skip_special_tokens=True)
+            print(f"Detokenized {len(token_ids):,} tokens locally")
+            return text
+        
+        # KoboldCpp API fallback with batching
         base_url = self.api_url.replace('/v1/chat/completions', '')
         all_text = []
         
@@ -219,8 +281,7 @@ class StreamingAPIClient:
                 
                 if response.status_code == 200:
                     data = response.json()
-                    #print(data)
-                    if  "result" in data:
+                    if "result" in data:
                         chunk_text = data["result"]
                         all_text.extend(chunk_text)
                         print(f"  Chunk {i}/{len(chunks)}: {len(chunk_text)} words")
@@ -233,19 +294,24 @@ class StreamingAPIClient:
                 
             except Exception as e:
                 print(f"  Chunk {i}/{len(chunks)}: Error {e}")
-                # Fallback estimation
-                
-        #print(f"Total ollected: {len(all_token_ids):,}")
+        
         text = "".join(all_text)
-        #print(text)
         return text
         
     def tokens_to_text(self, token_ids: List[int]) -> str:
-        """ Convert token IDs back to text via API """
+        """ Convert token IDs back to text via API 
+        
+        Uses local tokenizer if available.
+        """
         if not token_ids:
             print(f"No token ids!")
             return ""
         
+        if self.tokenizer:
+            # Local detokenization
+            return self.tokenizer.decode(token_ids, skip_special_tokens=True)
+        
+        # KoboldCpp API fallback
         try:
             base_url = self.api_url.replace('/v1/chat/completions', '')
             response = requests.post(
@@ -272,7 +338,13 @@ class StreamingAPIClient:
             return ""
     
     def get_max_context_length(self) -> int:
-        """ Get model's maximum context length from API """
+        """ Get model's maximum context length from API or configuration """
+        
+        # Use configured value if available (NVIDIA NIM mode)
+        if self._max_context:
+            return self._max_context
+        
+        # Try to detect from API (KoboldCpp mode)
         try:
             base_url = self.api_url.replace('/v1/chat/completions', '')
             response = requests.get(
@@ -310,6 +382,39 @@ class StreamingAPIClient:
         except Exception as e:
             print(f"Error detecting model name ({e})")
             return None
+    def _make_request_with_retry(self, url: str, payload: dict, stream: bool = False, max_retries: int = 5):
+        """ Make request with automatic retry on rate limits """
+        import time
+        
+        for attempt in range(max_retries):
+            try:
+                response = requests.post(
+                    url,
+                    json=payload,
+                    headers=self.headers,
+                    stream=stream,
+                    timeout=999
+                )
+                
+                if response.status_code == 200:
+                    return response
+                elif response.status_code == 429:
+                    retry_after = int(response.headers.get('Retry-After', 60))
+                    print(f"Rate limited. Waiting {retry_after}s (attempt {attempt + 1}/{max_retries})...")
+                    time.sleep(retry_after)
+                else:
+                    print(f"Request failed with status {response.status_code}: {response.text}")
+                    return None
+                    
+            except Exception as e:
+                print(f"Request error: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                else:
+                    return None
+        
+        print(f"Max retries exceeded")
+        return None
     
     def generate_continuation(self, context: str, max_tokens: int = 1024,
                             temperature: float = 1.0, top_k: int = 100, 
@@ -318,53 +423,52 @@ class StreamingAPIClient:
         """ Generate text continuation from context """
         
         instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
+        if not context:
+            return None
+            
         context = find_last_sentence_ending(context)
         print(f"Starting from: {context[-100:]}")
+        
         payload = {
             "messages": [
-                {"role": "system", "content": "You are a skilled novelist continuing a story."},
+                #{"role": "system", "content": "You are a skilled novelist continuing a story."},
                 {"role": "user", "content": f"{context}\n\n{instruction}"}
             ],
+            "model": self.model_name,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "top_p": top_p,
-            "repetition_penalty": rep_pen,
-            "top_k": top_k,
-            "stream": True,
-            "min_p": min_p
+            "stream": True
         }
         
         result = []
         
         try:
-            response = requests.post(
+            response = self._make_request_with_retry(
                 self.api_url,
-                json=payload,
-                headers=self.headers,
-                stream=True,
-                timeout=999
+                payload=payload,
+                stream=True
             )
-            
+
             for line in response.iter_lines():
                 if not line:
                     continue
                     
                 line_text = line.decode('utf-8')
+                
                 if line_text.startswith('data: '):
-                    line_text = line_text[6:]
+                    line_text = line_text[6:]  # Remove 'data: ' prefix
                 
                 if line_text == '[DONE]':
                     break
                     
                 try:
                     data = json.loads(line_text)
-                    if 'choices' in data and len(data['choices']) > 0:
-                        if 'delta' in data['choices'][0]:
-                            if 'content' in data['choices'][0]['delta']:
-                                token = data['choices'][0]['delta']['content']
-                                result.append(token)
-                                print(token, end='', flush=True)
-                except json.JSONDecodeError:
+                    content = data['choices'][0]['delta'].get('content')
+                    if content is not None:  # Explicitly check for None, allow empty strings
+                        result.append(content)
+                        print(content, end='', flush=True)
+                except (json.JSONDecodeError, KeyError, IndexError):
                     continue
             
             print()  # New line after generation

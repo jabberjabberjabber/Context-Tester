@@ -13,4 +13,6 @@ dependencies = [
     "regex>=2025.7.34",
     "requests>=2.32.4",
     "statistics>=1.0.3.5",
+    "torch>=2.8.0",
+    "transformers>=4.56.2",
 ]
