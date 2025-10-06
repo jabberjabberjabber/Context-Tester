@@ -230,6 +230,7 @@ def run_benchmarks(context: str, rounds: int, client: StreamingAPIClient,
     retry = False
     
     while round_num <= rounds:
+        
         if retries >= max_retries:
             print(f"Maximum number of retries reached {retries} for this tier")
             return []
@@ -265,25 +266,26 @@ def run_benchmarks(context: str, rounds: int, client: StreamingAPIClient,
         round_end_time = datetime.now()
         generation_time = (round_end_time - round_start_time).total_seconds()
         
-        if retry:
-            retries += 1
-            
-            print(f"Retry number {retries} of {max_retries}") 
-            retry = False
-            continue
         
         if not retry:
             try:
                 if client.count_tokens(continuation) < (generation_params['max_tokens'] * 0.6):
                     print(f"Not enough tokens generated for round {round_num}")
-
-                analysis = analyze_text_comprehensive(continuation, client)
-                
+                    retry = True 
+                    
+                else:
+                    analysis = analyze_text_comprehensive(continuation, client)
+                    
+                    
             except Exception as e:
                 print(f"WARNING: Analysis failed for round {round_num}: {e}")
-                retry = True
-                continue
-
+                retry = True                
+        
+        if retry:
+            retries += 1
+            print(f"Retry number {retries} of {max_retries}") 
+            retry = False
+            continue
 
             
         if analysis:
@@ -1108,6 +1110,9 @@ Examples:
         print(f"Divisions must be 1 or a power of 2 such as 2 or 4 or 8")
         return 1
     
+    if args.start_context < int(args.max_tokens * 2):
+        print(f"Start context {args.start_context} must be at least 2 times larger than max tokens {args.max_tokens}.")
+        return 1
     try:
         # Initialize components
         print("=" * 60)
@@ -1164,6 +1169,8 @@ Examples:
         metadata['experiment_metadata']['max_context'] = max_context
         
         context_lengths = generate_context_lengths(max_context, args.divisions, args.start_context)
+        
+                
         metadata['context_lengths'] = context_lengths
         
         working_tokens = prepare_working_tokens(reference_text, max_context, client)
