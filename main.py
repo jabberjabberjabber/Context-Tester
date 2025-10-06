@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Any, Literal, TypeAlias
 import os
 import shutil
+import sys
 
 import requests
 from readability_tests import (
@@ -105,7 +106,10 @@ def prepare_working_tokens(text: str, max_context: int, client: StreamingAPIClie
     
     # Get the working portion first
     all_tokens = client.tokenize_text_batched(text)
-    
+    if not all_tokens:
+        print(f"No tokenizer. Exiting.")
+        sys.exit()
+        
     if len(all_tokens) < min_required:
         # Handle repetition case
         repeats_needed = (min_required // len(all_tokens)) + 1
@@ -207,7 +211,7 @@ def build_context_window(working_tokens: List[str], context_length: int,
 # ================================
 
 def run_benchmarks(context: str, rounds: int, client: StreamingAPIClient, 
-                  generation_params: dict) -> List[dict]:
+                  generation_params: dict, max_retries: int) -> List[dict]:
     """ Run multiple benchmark rounds for a single context
     
     Args:
@@ -215,15 +219,24 @@ def run_benchmarks(context: str, rounds: int, client: StreamingAPIClient,
         rounds: Number of rounds to run
         client: API client for generation
         generation_params: Generation parameters (max_tokens, temperature, etc.)
-        
+        max_retries: Number of retries to run in case of outlier or bad round 
+    
     Returns:
         List of individual round results
     """
     round_results = []
+    retries = 0
+    round_num = 1
+    retry = False
     
-    for round_num in range(rounds):
+    while round_num <= rounds:
+        if retries >= max_retries:
+            print(f"Maximum number of retries reached {retries} for this tier")
+            return []
+
         if rounds > 1:
-            print(f"  Round {round_num + 1}/{rounds}:")
+            
+            print(f"  Round {round_num}/{rounds}:")
         else:
             print(f"Generating continuation...")
         
@@ -240,43 +253,53 @@ def run_benchmarks(context: str, rounds: int, client: StreamingAPIClient,
                 rep_pen=generation_params['rep_pen']
             )
         except Exception as e:
-            print(f"WARNING: Generation failed for round {round_num + 1}: {e}")
-            continue
+            print(f"WARNING: Generation failed for round {round_num}: {e}")
+            retry = True
+
         
         if not continuation:
-            print(f"WARNING: No continuation generated for round {round_num + 1}")
-            continue
+            print(f"WARNING: No continuation generated for round {round_num}")
+            retry = True
 
-        if client.count_tokens(continuation) < (generation_params['max_tokens'] * 0.8):
-            print(f"Not enough tokens generated for round {round_num + 1}")
-            continue
         
         round_end_time = datetime.now()
         generation_time = (round_end_time - round_start_time).total_seconds()
         
-        try:
-            analysis = analyze_text_comprehensive(continuation, client)
-        except Exception as e:
-            print(f"WARNING: Analysis failed for round {round_num + 1}: {e}")
+        if retry:
+            retries += 1
+            
+            print(f"Retry number {retries} of {max_retries}") 
+            retry = False
             continue
         
-        result = {
-            'round_number': round_num + 1,
-            'continuation_length': len(continuation),
-            'continuation_tokens': client.count_tokens(continuation),
-            'generation_time_seconds': generation_time,
-            'timestamp': round_end_time.isoformat(),
-            'continuation_text': continuation,
-            **analysis
-        }
-        
-        round_results.append(result)
-        
-        if rounds > 1:
-            print(f""
-                  f"    Cloze: {analysis['cloze_score']:6.2f}, "
-                  f"Level: {analysis['reading_level']:>6}, "
-                  f"Vocab: {analysis['vocabulary_diversity']:5.3f}")
+        if not retry:
+            try:
+                if client.count_tokens(continuation) < (generation_params['max_tokens'] * 0.6):
+                    print(f"Not enough tokens generated for round {round_num}")
+
+                analysis = analyze_text_comprehensive(continuation, client)
+                
+            except Exception as e:
+                print(f"WARNING: Analysis failed for round {round_num}: {e}")
+                retry = True
+                continue
+
+
+            
+        if analysis:
+            result = {
+                'round_number': round_num,
+                'continuation_length': len(continuation),
+                'continuation_tokens': client.count_tokens(continuation),
+                'generation_time_seconds': generation_time,
+                'timestamp': round_end_time.isoformat(),
+                'continuation_text': continuation,
+                **analysis
+            }
+            
+            round_results.append(result)
+            round_num = round_num + 1        
+            #outliers = check_for_outliers(round_results)
     
     return round_results
 
@@ -674,7 +697,7 @@ def reanalyze(input_dir: Path, client: StreamingAPIClient, model_id: Optional[st
                 new_round_data = {
                     'round_number': round_data.get('round_number'),
                     'continuation_length': len(continuation_text),
-                    'continuation_tokens': client.count_tokens(continuation_text),
+                    'continuation_tokens': round_data.get('continuation_tokens'),
                     'generation_time_seconds': round_data.get('generation_time_seconds'),
                     'timestamp': round_data.get('timestamp'),
                     'continuation_text': continuation_text,
@@ -907,7 +930,7 @@ Examples:
     parser.add_argument(
         'input_file',
         nargs='?',
-        help='Path to reference text file (any format supported by extractous) OR results directory for analysis/reanalysis'
+        help='Path to reference text OR results directory for analysis/reanalysis'
     )
     
     parser.add_argument(
@@ -944,26 +967,26 @@ Examples:
         '--rounds',
         type=int,
         default=3,
-        help='Number of test rounds per context length (default: 3)'
+        help='Number of test rounds per tier (default: 3)'
     )
     
     parser.add_argument(
         '--divisions',
         type=int,
         default=1,
-        help='Number of context divisions between tiers as a power of 2'
+        help='Divide tiers (must be power of 2)'
     )
     
     parser.add_argument(
         '--model-name',
         default=None,
-        help='Override model name (auto-detected if not provided)'
+        help='Override model name (auto-detected if using KoboldCpp)'
     )
     
     parser.add_argument(
         '--max-tokens',
         type=int,
-        default=512,
+        default=1024,
         help='Maximum tokens to generate (default: 1024)'
     )
     
@@ -991,21 +1014,21 @@ Examples:
     parser.add_argument(
         '--min-p',
         type=float,
-        default=0.1,
-        help='Min-p sampling (default: 0.1)'
+        default=0,
+        help='Not used (deprecated)'
     )
     
     parser.add_argument(
         '--rep-pen',
         type=float,
-        default=1.01,
-        help='Repetition penalty (default: 1.01)'
+        default=1.00,
+        help='Not used (deprecated)'
     )
     
     parser.add_argument(
         '--start-context',
         type=int,
-        default=None,
+        default=2048,
         help='Starting context size in tokens (skip smaller sizes)'
     )
     
@@ -1025,14 +1048,20 @@ Examples:
     parser.add_argument(
         '--tokenizer-model',
         default=None,
-        help='HuggingFace tokenizer model name (e.g., "meta-llama/Llama-3.1-8B-Instruct")'
+        help='HuggingFace tokenizer model name (e.g., "meta-llama/Llama-3.1-8B-Instruct", not needed if using KoboldCpp)'
     )
 
+    parser.add_argument(
+        '--embedding-model',
+        default="nvidia/nv-embed-v1",
+        help='NIM model name (e.g., "nvidia/nv-embed-v1", not needed if using KoboldCpp)'
+    )
+    
     parser.add_argument(
         '--max-context',
         type=int,
         default=None,
-        help='Maximum context length (required when using --tokenizer-model)'
+        help='Maximum context length to test (required when using --tokenizer-model)'
     )
     
     args = parser.parse_args()
@@ -1047,7 +1076,9 @@ Examples:
                 args.api_url, 
                 args.api_password,
                 tokenizer_model=args.tokenizer_model,
-                max_context=args.max_context
+                model_name=args.model_name,
+                max_context=args.max_context,
+                embedding_model=args.embedding_model
             )
             initialize_word_list(args.word_list)
             reanalyze(results_dir, client, args.model_id)
@@ -1088,7 +1119,8 @@ Examples:
             args.api_password,
             tokenizer_model=args.tokenizer_model,
             model_name=args.model_name,
-            max_context=args.max_context
+            max_context=args.max_context,
+            embedding_model=args.embedding_model
         )
         initialize_word_list(args.word_list)
         
@@ -1096,15 +1128,14 @@ Examples:
         text_name = os.path.basename(args.input_file)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         
-        # Create output directory
-        output_dir = create_output_directory(model_name, text_name, timestamp)
-        print(f"Output directory: {output_dir}")
-        
+       
         # Prepare experiment metadata
         metadata = {
             'experiment_metadata': {
                 'model_name': model_name,
                 'model_id': args.model_id,
+                'embedding_model': args.embedding_model,
+                'tokenizer_model': args.tokenizer_model,
                 'source_text_file': args.input_file,
                 'source_text_name': text_name,
                 'start_time': datetime.now().isoformat(),
@@ -1137,6 +1168,9 @@ Examples:
         
         working_tokens = prepare_working_tokens(reference_text, max_context, client)
         
+        # Create output directory
+        output_dir = create_output_directory(model_name, text_name, timestamp)
+        print(f"Output directory: {output_dir}")
         # Analyze baseline
         #print(f"\nGenerating embeddings for sample text...")
         #baseline_text = client.tokens_to_text(working_tokens[-args.max_tokens:] if len(working_tokens) > args.max_tokens else working_tokens)
@@ -1195,22 +1229,26 @@ Examples:
             
             print(f"Context built successfully ({len(context.split())} words)")
             
-            # Run benchmarks with retry logic for outliers
+            #results = run_benchmarks(context, args.rounds, client, generation_params, args.max_retries)
+            
+            # Run benchmarks with retry logic for bad results
+            #successful_contexts = 0
             retry_count = 0
             while retry_count <= args.max_retries:
                 if retry_count > 0:
                     print(f"\nRetry {retry_count}/{args.max_retries} for context {context_length:,}")
                 
-                results = run_benchmarks(context, args.rounds, client, generation_params)
+                results = run_benchmarks(context, args.rounds, client, generation_params, args.max_retries)
                 
                 if not results:
                     print(f"WARNING: No successful rounds for context length {context_length}")
+                    retry_count += 1
                     break
-                
+                    
                 # Check for outliers
                 outlier_indices = check_for_outliers(results)
                 
-                if not outlier_indices:
+                if not outlier_indices and not (len(results) < args.rounds):
                     # No outliers, save results and continue
                     save_context_results(output_dir, context_length, context_info, results, generation_params)
                     
@@ -1228,13 +1266,19 @@ Examples:
                     successful_contexts += 1
                     break
                 else:
-                    print(f"Outliers detected at indices: {outlier_indices}")
+                    num_outliers = len(outlier_indices)
+                    print(f"Outliers detected: {num_outliers}")
                     retry_count += 1
-                    
-                    if retry_count > args.max_retries:
-                        print(f"Max retries exceeded. Skipping context {context_length:,} due to persistent outliers.")
-                        break
-        
+                    retry_results = run_benchmarks(context, num_outliers, client, generation_params, max_retries=1)
+                    for i, val in enumerate(outlier_indices):
+                        results[val] = retry_results[i]
+                    if check_for_outliers(results):
+                        print(f"Outliers consistent. Tier {contex_length} invalid")
+                    #break
+                    #if retry_count > args.max_retries:
+                    #print(f"Max retries exceeded. Skipping context {context_length:,} due to persistent outliers.")
+                    break
+                       
         # Update metadata with completion info
         metadata['experiment_metadata']['end_time'] = datetime.now().isoformat()
         metadata['experiment_metadata']['successful_contexts'] = successful_contexts

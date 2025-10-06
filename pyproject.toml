@@ -5,14 +5,17 @@ description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
+    "blobfile>=3.1.0",
     "bs4>=0.0.2",
     "extractous>=0.3.0",
     "matplotlib>=3.10.5",
     "numpy>=2.3.2",
     "pandas>=2.3.1",
+    "protobuf>=6.32.1",
     "regex>=2025.7.34",
     "requests>=2.32.4",
     "statistics>=1.0.3.5",
+    "tiktoken>=0.11.0",
     "torch>=2.8.0",
     "transformers>=4.56.2",
 ]
