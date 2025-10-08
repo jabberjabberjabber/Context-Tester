@@ -405,7 +405,7 @@ def generate_plot_filename(dataset_names: List[str]) -> str:
         dataset_names: List of dataset names from CSV metadata
 
     Returns:
-        Generated PNG filename
+        Generated PNG filename (max 200 chars to avoid Windows path limits)
     """
     # Clean dataset names for filenames (replace spaces with underscores, remove special chars)
     def clean_for_filename(name):
@@ -416,5 +416,29 @@ def generate_plot_filename(dataset_names: List[str]) -> str:
     if len(cleaned_names) == 1:
         return f"{cleaned_names[0]}.png"
 
+    # Check if this looks like --plot-rounds output (multiple datasets with R1, R2, etc. and AVG)
+    # Pattern: "base_name R1", "base_name R2", ..., "base_name AVG"
+    if len(cleaned_names) > 3:
+        # Check if all names share a common base
+        first_parts = [' '.join(name.split()[:-1]) for name in dataset_names]
+        last_parts = [name.split()[-1] for name in dataset_names]
+
+        # If they all have the same base and end with R1, R2, etc, AVG
+        if len(set(first_parts)) == 1 and 'AVG' in last_parts:
+            # This is --plot-rounds output, use base name + "_rounds.png"
+            base = clean_for_filename(first_parts[0])
+            return f"{base}_rounds.png"
+
+    # Standard comparison: limit to avoid Windows 260 char path limit
+    # Use first dataset + count of others
+    if len(cleaned_names) > 6:
+        return f"{cleaned_names[0]}_with_{len(cleaned_names)-1}_others.png"
+
     # Multiple files: model1_text1_id1_with_model2_text2_id2.png
-    return f"{cleaned_names[0]}_with_{'_'.join(cleaned_names[1:])}.png"
+    filename = f"{cleaned_names[0]}_with_{'_'.join(cleaned_names[1:])}.png"
+
+    # If still too long, truncate
+    if len(filename) > 200:
+        return f"{cleaned_names[0]}_with_{len(cleaned_names)-1}_datasets.png"
+
+    return filename

@@ -70,6 +70,7 @@ def run_benchmarks(
 
         round_end_time = datetime.now()
         generation_time = (round_end_time - round_start_time).total_seconds()
+        generation_time_ms = int(generation_time * 1000)
 
         # Validate token count
         token_count = client.count_tokens(continuation)
@@ -99,6 +100,7 @@ def run_benchmarks(
             'continuation_length': len(continuation),
             'continuation_tokens': token_count,
             'generation_time_seconds': generation_time,
+            'generation_time_ms': generation_time_ms,
             'timestamp': round_end_time.isoformat(),
             'continuation_text': continuation,
             **analysis
@@ -116,34 +118,60 @@ def check_for_outliers(results: List[dict], threshold: float = 2.0) -> List[int]
 
     Args:
         results: List of round results
-        threshold: Z-score threshold for outlier detection
+        threshold: Z-score threshold for outlier detection (deprecated, uses IQR now)
 
     Returns:
         List of indices of outlier rounds (empty if none)
     """
-    if len(results) < 3:  # Need minimum data for outlier detection
+    if len(results) < 4:  # Need minimum 4 values for IQR outlier detection
         return []
 
     try:
-        outlier_analysis = analyze_round_outliers(results)
+        # Run IQR-based outlier analysis with multiplier=1.5 (standard)
+        outlier_analysis = analyze_round_outliers(results, iqr_multiplier=1.5)
 
         if not outlier_analysis.get('has_outliers', False):
             return []
 
-        # Extract outlier indices for severe outliers only
-        outlier_indices = []
+        # For critical metrics like cloze_score, detect ANY outlier (not just severe)
+        # This is more conservative and catches degradation better
+        critical_metrics = ['cloze_score', 'vocabulary_diversity']
+        outlier_indices = set()
 
-        for metric, outliers in outlier_analysis.get('outliers_by_metric', {}).items():
-            for outlier_info in outliers:
-                if outlier_info.get('severity') == 'severe':
-                    round_idx = outlier_info.get('round_index')
-                    if round_idx is not None and round_idx not in outlier_indices:
-                        outlier_indices.append(round_idx)
+        # Check critical metrics - any outlier is significant
+        for metric in critical_metrics:
+            if metric in outlier_analysis.get('outlier_details', {}):
+                details = outlier_analysis['outlier_details'][metric]
+                indices = details.get('outlier_indices', [])
+                outlier_indices.update(indices)
 
-        return sorted(outlier_indices)
+                # Print warning for critical metric outliers
+                if indices:
+                    values = details.get('outlier_values', [])
+                    bounds = details.get('iqr_stats', {})
+
+                    # Get all values for this metric to show context
+                    all_values = [r.get(metric, 0) for r in results]
+
+                    print(f"    ⚠️  Outlier detected in {metric}:")
+                    print(f"        Round(s): {[i+1 for i in indices]}")
+                    print(f"        Value(s): {[f'{v:.4f}' for v in values]}")
+                    print(f"        All values: {[f'{v:.4f}' for v in all_values]}")
+                    print(f"        Normal range: {bounds.get('lower_bound', 0):.4f} - {bounds.get('upper_bound', 0):.4f}")
+                    print(f"        Median: {bounds.get('median', 0):.4f}, IQR: {bounds.get('iqr', 0):.4f}")
+
+        # Also add severe outliers (outliers in multiple metrics)
+        severe_indices = outlier_analysis.get('severe_outlier_rounds', set())
+        if severe_indices:
+            print(f"    🚨 Severe outliers (multiple metrics): Round(s) {[i+1 for i in severe_indices]}")
+            outlier_indices.update(severe_indices)
+
+        return sorted(list(outlier_indices))
 
     except Exception as e:
         print(f"WARNING: Outlier detection failed: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 
@@ -226,9 +254,32 @@ def run_context_test_with_retries(
             return True
 
         else:
-            # Have outliers - retry those specific rounds
+            # Have outliers - but check if too many to be valid
             num_outliers = len(outlier_indices)
-            print(f"Outliers detected: {num_outliers}")
+            outlier_percentage = (num_outliers / len(results)) * 100
+
+            # If more than 30% are outliers, the distribution itself is problematic
+            if outlier_percentage > 30:
+                print(f"\n⚠️  {num_outliers}/{len(results)} rounds ({outlier_percentage:.0f}%) flagged as outliers")
+                print(f"      This suggests high variance or systematic issues, not true outliers")
+                print(f"      Saving results as-is (variance may indicate real degradation)")
+                save_context_results(
+                    output_dir,
+                    context_length,
+                    context_info,
+                    results,
+                    generation_params
+                )
+
+                averaged = average_results(results)
+                print(f"\nAveraged Results (n={len(results)}):")
+                print(f"  Cloze Score: {averaged['cloze_score']:6.2f} (±{averaged.get('cloze_score_std', 0):4.2f})")
+                print(f"  Vocabulary Diversity: {averaged['vocabulary_diversity']:5.3f} (±{averaged.get('vocab_diversity_std', 0):5.3f})")
+
+                return True
+
+            # Try replacing outliers ONCE
+            print(f"\n⚠️  {num_outliers} outlier round(s) detected, replacing once...")
 
             retry_results = run_benchmarks(
                 context,
@@ -242,13 +293,38 @@ def run_context_test_with_retries(
             # Replace outliers with new results
             if len(retry_results) == num_outliers:
                 for i, idx in enumerate(outlier_indices):
+                    print(f"      Replacing round {idx+1} with new generation")
                     results[idx] = retry_results[i]
+                    # Update round number to indicate it's a replacement
+                    results[idx]['round_number'] = idx + 1
+            else:
+                print(f"      WARNING: Only got {len(retry_results)} replacements for {num_outliers} outliers")
 
-            # Check if outliers still present
-            if check_for_outliers(results):
-                print(f"Outliers still present after retry. Context {context_length} may be problematic.")
+            # Save results regardless of whether new outliers appear
+            # Reasoning: One replacement attempt is enough - if issues persist, they may be real
+            print(f"      Saving results (with {num_outliers} round(s) replaced)")
 
-            retry_count += 1
+            save_context_results(
+                output_dir,
+                context_length,
+                context_info,
+                results,
+                generation_params
+            )
 
+            # Print summary
+            averaged = average_results(results)
+            print(f"\nAveraged Results (n={len(results)}):")
+            print(f"  Cloze Score: {averaged['cloze_score']:6.2f}")
+            if 'cloze_score_std' in averaged:
+                print(f"  (±{averaged['cloze_score_std']:4.2f})")
+            print(f"  Reading Level: {averaged['reading_level']:>6}")
+            print(f"  Vocabulary Diversity: {averaged['vocabulary_diversity']:5.3f}")
+            if 'vocab_diversity_std' in averaged:
+                print(f"  (±{averaged['vocab_diversity_std']:5.3f})")
+
+            return True
+
+    # Should not reach here, but just in case
     print(f"Max retries exceeded for context {context_length:,}")
     return False

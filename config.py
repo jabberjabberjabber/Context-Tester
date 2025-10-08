@@ -107,8 +107,8 @@ Examples:
     parser.add_argument(
         '--rounds',
         type=int,
-        default=3,
-        help='Number of test rounds per tier (default: 3)'
+        default=10,
+        help='Number of test rounds per tier (default: 10, minimum 3 recommended)'
     )
 
     parser.add_argument(

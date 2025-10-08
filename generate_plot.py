@@ -280,13 +280,25 @@ def convert_enhanced_results_to_dataframe(enhanced_results, dataset_name):
     return df_clean
 
 def get_plot_colors_and_markers():
-    """ Get distinct colors and markers for up to 6 datasets.
-    
+    """ Get distinct colors and markers for up to 20 datasets.
+
+    For --plot-rounds with 10 rounds, we need 11 colors (R1-R10 + AVG).
+    Colors cycle through a palette, markers cycle through available shapes.
+
     Returns:
         Tuple of (colors, markers) lists
     """
-    colors = ['#2563eb', '#dc2626', '#16a34a', '#ca8a04', '#9333ea', '#c2410c']
-    markers = ['o', 's', '^', 'D', 'v', '<']
+    # Expanded color palette (20 distinct colors)
+    colors = [
+        '#2563eb', '#dc2626', '#16a34a', '#ca8a04', '#9333ea', '#c2410c',
+        '#0891b2', '#e11d48', '#65a30d', '#d97706', '#7c3aed', '#ea580c',
+        '#0284c7', '#be123c', '#4d7c0f', '#b45309', '#6d28d9', '#c2410c',
+        '#0369a1', '#9f1239'
+    ]
+
+    # Expanded marker set (14 distinct markers)
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'H', 'X', 'd', 'P', '8']
+
     return colors, markers
     
 def calculate_axis_ranges(data, dataset_names):
@@ -455,7 +467,10 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     ax1.invert_yaxis()
     ax1.grid(True, alpha=0.3)
     if plotted_any_data:
-        ax1.legend(loc='best', fontsize=8)
+        # Use smaller font and multiple columns for many datasets
+        ncols = 1 if len(dataset_names) <= 6 else 2
+        fontsize = 8 if len(dataset_names) <= 6 else 6
+        ax1.legend(loc='best', fontsize=fontsize, ncol=ncols)
     
     # Plot 2: Cloze Score (top-right)
     ax2 = axes[0, 1]
@@ -481,7 +496,9 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
         ax2.set_ylim(ranges['cloze_score'])
     ax2.grid(True, alpha=0.3)
     if has_cloze_data:
-        ax2.legend(loc='best', fontsize=8)
+        ncols = 1 if len(dataset_names) <= 6 else 2
+        fontsize = 8 if len(dataset_names) <= 6 else 6
+        ax2.legend(loc='best', fontsize=fontsize, ncol=ncols)
     
     # Plot 3: Adjacent Coherence (bottom-left)
     ax3 = axes[1, 0]
@@ -507,7 +524,9 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
         ax3.set_ylim(ranges['adjacent_coherence'])
     ax3.grid(True, alpha=0.3)
     if has_coherence_data:
-        ax3.legend(loc='best', fontsize=8)
+        ncols = 1 if len(dataset_names) <= 6 else 2
+        fontsize = 8 if len(dataset_names) <= 6 else 6
+        ax3.legend(loc='best', fontsize=fontsize, ncol=ncols)
     else:
         ax3.text(0.5, 0.5, 'No adjacent_coherence data available',
                 ha='center', va='center', transform=ax3.transAxes, fontsize=12, color='gray')
@@ -536,7 +555,9 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
         ax4.set_ylim(ranges['bigram_repetition'])
     ax4.grid(True, alpha=0.3)
     if has_bigram_data:
-        ax4.legend(loc='best', fontsize=8)
+        ncols = 1 if len(dataset_names) <= 6 else 2
+        fontsize = 8 if len(dataset_names) <= 6 else 6
+        ax4.legend(loc='best', fontsize=fontsize, ncol=ncols)
     
     # Format x-axis labels for all plots
     for ax in [ax1, ax2, ax3, ax4]:
@@ -619,7 +640,241 @@ def parse_arguments():
     parser.add_argument('--plot-rounds', action='store_true',
                        help='Plot individual rounds in addition to averages (requires results directories)')
 
+    parser.add_argument('--enhanced', action='store_true',
+                       help='Create enhanced plots with composite scores and statistical analysis')
+
+    parser.add_argument('--dpi', type=int, default=300,
+                       help='Output image resolution (default: 300)')
+
     return parser.parse_args()
+
+
+def create_enhanced_statistical_plots(results_dir_path, output_file='enhanced_analysis.png', dpi=300):
+    """Create enhanced plots with composite scores and statistical analysis.
+
+    Args:
+        results_dir_path: Path to results directory
+        output_file: Path for output PNG file
+        dpi: Resolution for output image
+    """
+    from file_operations import load_all_context_results, load_experiment_metadata
+    from statistical_analysis import comprehensive_statistical_analysis
+    import matplotlib
+    matplotlib.use('Agg')
+
+    # Load data
+    context_results = load_all_context_results(results_dir_path)
+    metadata = load_experiment_metadata(results_dir_path)
+
+    # Organize data by context size
+    results_by_context = {}
+    for data in context_results:
+        context_size = data['context_length']
+        rounds = data.get('individual_rounds', [])
+        results_by_context[context_size] = rounds
+
+    # Perform comprehensive statistical analysis
+    analysis = comprehensive_statistical_analysis(results_by_context)
+
+    if not analysis:
+        print("No data available for enhanced analysis")
+        return
+
+    context_sizes = analysis['context_sizes']
+    composite_scores = analysis['composite_scores']
+
+    # Create 2x2 plot layout
+    fig, axes = plt.subplots(2, 2, figsize=(16, 12))
+    fig.suptitle('Enhanced Performance Analysis with Statistical Significance',
+                 fontsize=16, fontweight='bold')
+
+    # Panel 1 (Top-Left): Composite Degradation Score with CI
+    ax1 = axes[0, 0]
+
+    means = [composite_scores[c]['mean'] for c in context_sizes]
+    ci_lows = [composite_scores[c]['ci_lower'] for c in context_sizes]
+    ci_highs = [composite_scores[c]['ci_upper'] for c in context_sizes]
+
+    # Plot mean line
+    ax1.plot(context_sizes, means, marker='o', linewidth=3,
+             markersize=8, color='#2563eb', label='Composite Score')
+
+    # Plot CI band
+    ax1.fill_between(context_sizes, ci_lows, ci_highs,
+                     alpha=0.3, color='#2563eb', label='95% CI')
+
+    # Add baseline reference line
+    baseline_mean = means[0]
+    ax1.axhline(y=baseline_mean, color='#16a34a', linestyle='--',
+                linewidth=2, label=f'Baseline ({context_sizes[0]} tokens)')
+
+    # Add degradation zones
+    ax1.axhspan(0, 20, alpha=0.1, color='green', label='No Degradation')
+    ax1.axhspan(20, 40, alpha=0.1, color='yellow', label='Mild Degradation')
+    ax1.axhspan(40, 100, alpha=0.1, color='red', label='Severe Degradation')
+
+    # Mark significant degradation points
+    for i, context_size in enumerate(context_sizes[1:], 1):
+        if context_size in analysis['significance_tests']:
+            sig_test = analysis['significance_tests'][context_size]
+            if sig_test['significant_corrected']:
+                effect = analysis['effect_sizes'][context_size]
+                # Size marker by effect size
+                marker_size = 200 * abs(effect['effect_size'])
+                ax1.scatter(context_size, means[i], s=marker_size,
+                           marker='x', color='red', linewidth=3, zorder=5)
+
+    ax1.set_xscale('log')
+    ax1.set_xlabel('Context Length', fontweight='bold')
+    ax1.set_ylabel('Composite Degradation Score', fontweight='bold')
+    ax1.set_title('Composite Score (Higher = More Degradation)', fontweight='bold')
+    ax1.set_ylim(0, 100)
+    ax1.grid(True, alpha=0.3)
+    ax1.legend(loc='upper left', fontsize=8)
+
+    # Add trend annotation
+    rho = analysis['trend_correlation']
+    trend_p = analysis['trend_p_value']
+    trend_text = f"Trend: ρ={rho:.3f}, p={trend_p:.4f}"
+    if analysis['has_degradation_trend']:
+        trend_text += " (SIGNIFICANT)"
+        ax1.text(0.95, 0.05, trend_text, transform=ax1.transAxes,
+                ha='right', va='bottom', fontsize=10, fontweight='bold',
+                bbox=dict(boxstyle='round', facecolor='yellow', alpha=0.7))
+    else:
+        ax1.text(0.95, 0.05, trend_text, transform=ax1.transAxes,
+                ha='right', va='bottom', fontsize=10,
+                bbox=dict(boxstyle='round', facecolor='lightgray', alpha=0.7))
+
+    # Panel 2 (Top-Right): Variance/Consistency Indicator
+    ax2 = axes[0, 1]
+
+    cvs = []  # Coefficient of variation
+    for context_size in context_sizes:
+        mean = composite_scores[context_size]['mean']
+        std = composite_scores[context_size]['std']
+        cv = (std / mean) if mean > 0 else 0
+        cvs.append(cv)
+
+    bars = ax2.bar(range(len(context_sizes)), cvs, color='#2563eb', alpha=0.7)
+
+    # Color bars exceeding threshold
+    threshold = 0.15
+    for i, cv in enumerate(cvs):
+        if cv > threshold:
+            bars[i].set_color('#dc2626')
+
+    ax2.axhline(y=threshold, color='#ca8a04', linestyle='--',
+                linewidth=2, label=f'Acceptable Threshold (CV={threshold})')
+
+    ax2.set_xticks(range(len(context_sizes)))
+    ax2.set_xticklabels([f'{int(c/1024)}K' if c >= 1024 else str(c)
+                         for c in context_sizes])
+    ax2.set_xlabel('Context Length', fontweight='bold')
+    ax2.set_ylabel('Coefficient of Variation', fontweight='bold')
+    ax2.set_title('Consistency (Lower = More Consistent)', fontweight='bold')
+    ax2.grid(True, alpha=0.3, axis='y')
+    ax2.legend()
+
+    # Panel 3 (Bottom-Left): Effect Size Visualization
+    ax3 = axes[1, 0]
+
+    effect_context_sizes = []
+    effect_values = []
+    colors = []
+
+    for context_size in context_sizes[1:]:
+        if context_size in analysis['effect_sizes']:
+            effect = analysis['effect_sizes'][context_size]
+            effect_context_sizes.append(context_size)
+            effect_values.append(abs(effect['effect_size']))
+
+            # Color by magnitude
+            if effect['magnitude'] == 'large':
+                colors.append('#dc2626')
+            elif effect['magnitude'] == 'medium':
+                colors.append('#ca8a04')
+            else:
+                colors.append('#16a34a')
+
+    bars = ax3.bar(range(len(effect_context_sizes)), effect_values, color=colors)
+
+    # Add magnitude threshold lines
+    ax3.axhline(y=0.3, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+    ax3.axhline(y=0.5, color='gray', linestyle='--', linewidth=1, alpha=0.5)
+    ax3.text(len(effect_context_sizes)-0.5, 0.31, 'Medium', fontsize=8, ha='right')
+    ax3.text(len(effect_context_sizes)-0.5, 0.51, 'Large', fontsize=8, ha='right')
+
+    ax3.set_xticks(range(len(effect_context_sizes)))
+    ax3.set_xticklabels([f'{int(c/1024)}K' if c >= 1024 else str(c)
+                         for c in effect_context_sizes])
+    ax3.set_xlabel('Context Length', fontweight='bold')
+    ax3.set_ylabel('Effect Size (|r|)', fontweight='bold')
+    ax3.set_title('Effect Size vs Baseline (Larger = Bigger Difference)', fontweight='bold')
+    ax3.set_ylim(0, 1.0)
+    ax3.grid(True, alpha=0.3, axis='y')
+
+    # Panel 4 (Bottom-Right): Statistical Significance Map
+    ax4 = axes[1, 1]
+
+    sig_context_sizes = []
+    sig_markers = []
+    sig_colors = []
+    sig_labels = []
+
+    for context_size in context_sizes[1:]:
+        if context_size in analysis['significance_tests']:
+            sig_test = analysis['significance_tests'][context_size]
+            p_val = sig_test['corrected_p_value']
+            sig_context_sizes.append(context_size)
+
+            if p_val > 0.05:
+                sig_markers.append('o')
+                sig_colors.append('#16a34a')
+                sig_labels.append('No Change')
+            elif p_val > 0.01:
+                sig_markers.append('^')
+                sig_colors.append('#ca8a04')
+                sig_labels.append('Marginal')
+            else:
+                sig_markers.append('x')
+                sig_colors.append('#dc2626')
+                sig_labels.append('Significant')
+
+    # Plot significance markers
+    for i, (context, marker, color, label) in enumerate(zip(sig_context_sizes, sig_markers, sig_colors, sig_labels)):
+        y_pos = 1 if marker == 'o' else (2 if marker == '^' else 3)
+        ax4.scatter(context, y_pos, s=200, marker=marker,
+                   color=color, edgecolors='black', linewidth=2, zorder=3)
+
+    ax4.set_xscale('log')
+    ax4.set_xticks(context_sizes)
+    ax4.set_xticklabels([f'{int(c/1024)}K' if c >= 1024 else str(c)
+                         for c in context_sizes])
+    ax4.set_ylim(0.5, 3.5)
+    ax4.set_yticks([1, 2, 3])
+    ax4.set_yticklabels(['No Change\n(p > 0.05)', 'Marginal\n(0.01 < p ≤ 0.05)',
+                        'Significant\n(p ≤ 0.01)'])
+    ax4.set_xlabel('Context Length', fontweight='bold')
+    ax4.set_title('Statistical Significance vs Baseline', fontweight='bold')
+    ax4.grid(True, alpha=0.3, axis='x')
+
+    # Add summary text
+    summary = analysis['summary']
+    summary_text = (
+        f"Degradation Detected: {'YES' if summary['degradation_detected'] else 'NO'}\n"
+        f"Max Effect Size: {summary['max_effect_size']:.3f}\n"
+        f"Significant Points: {summary['num_significant_degradations']}"
+    )
+    ax4.text(0.02, 0.98, summary_text, transform=ax4.transAxes,
+            ha='left', va='top', fontsize=10, fontweight='bold',
+            bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.8))
+
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+    print(f"Enhanced analysis plot saved to: {output_file}")
+    plt.close()
+
 
 def main():
     """ Main function to run the complete analysis.
@@ -627,16 +882,35 @@ def main():
     args = parse_arguments()
 
     # Validate number of input files
-    if len(args.inputs) > 6:
-        print(f"Error: Too many inputs ({len(args.inputs)}). Maximum supported is 6.")
-        return
-
     if len(args.inputs) < 1:
         print("Error: At least one input is required.")
         return
 
+    # For standard comparison mode (not --plot-rounds), limit to 6 inputs for readability
+    if not args.plot_rounds and not args.enhanced and len(args.inputs) > 6:
+        print(f"Error: Too many inputs ({len(args.inputs)}). Maximum supported is 6 for standard comparison.")
+        print("Tip: Use --plot-rounds to visualize individual rounds from a single test.")
+        return
+
     try:
-        # Load and merge data first to get dataset names
+        # Check if enhanced mode with single directory input
+        if args.enhanced:
+            if len(args.inputs) != 1:
+                print("Error: --enhanced mode requires exactly one results directory")
+                return
+
+            input_path = Path(args.inputs[0])
+            if not is_results_directory(input_path):
+                print(f"Error: {input_path} is not a results directory")
+                print("Enhanced mode requires a results directory (containing metadata.json)")
+                return
+
+            # Create enhanced statistical plots
+            enhanced_output = input_path / f"{input_path.name}_enhanced.png"
+            create_enhanced_statistical_plots(input_path, enhanced_output, dpi=args.dpi)
+            return
+
+        # Standard comparison plotting
         print(f"Loading data from {len(args.inputs)} input(s)...")
         for i, f in enumerate(args.inputs, 1):
             input_type = "directory" if Path(f).is_dir() else "CSV file"
@@ -651,7 +925,7 @@ def main():
         main_output_file = generate_plot_filename(dataset_names)
 
         # Create plots (rounds are already separate datasets if plot_rounds=True)
-        create_comparison_plots(data, dataset_names, main_output_file)
+        create_comparison_plots(data, dataset_names, main_output_file, dpi=args.dpi)
         
     except FileNotFoundError as e:
         print(f"Error: Could not find one or more CSV files.")

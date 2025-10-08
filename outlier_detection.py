@@ -41,11 +41,13 @@ def detect_outliers_iqr(values: List[float], multiplier: float = 1.5) -> Tuple[S
     iqr = q3 - q1
     lower_bound = q1 - multiplier * iqr
     upper_bound = q3 + multiplier * iqr
-    
+
     # Find outlier indices in original order
+    # Use small epsilon for floating point comparison to avoid false positives
+    epsilon = 1e-9
     outlier_indices = set()
     for i, value in enumerate(values):
-        if value < lower_bound or value > upper_bound:
+        if value < (lower_bound - epsilon) or value > (upper_bound + epsilon):
             outlier_indices.add(i)
     
     iqr_stats = {

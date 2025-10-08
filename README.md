@@ -142,7 +142,7 @@ uv run main.py novel.txt --start-context 8192
 
 ### Test Parameters
 
-- **`--rounds`**: Number of generations per context size (default: 3). Averaged to reduce randomness.
+- **`--rounds`**: Number of generations per context size (default: 10). Averaged to reduce randomness. Minimum 3 recommended, 10+ for statistical significance testing.
 - **`--divisions`**: Add test points between power-of-2 context sizes (must be power of 2)
 - **`--max-context`**: Maximum context length to test (auto-detected for KoboldCpp)
 - **`--start-context`**: Skip testing context sizes below this value
@@ -191,9 +191,20 @@ uv run generate_plot.py results/model1-test/ results/model2-test/
 
 # Plot individual rounds alongside averages
 uv run generate_plot.py results/model-test/ --plot-rounds
+
+# Enhanced statistical analysis (composite scores, significance testing, effect sizes)
+uv run generate_plot.py results/model-test/ --enhanced
 ```
 
-The `--plot-rounds` flag will create separate lines for each test round (R1, R2, R3, etc.) plus the average (AVG), allowing you to visualize the variance between individual generations.
+**Plot Types:**
+
+- **Standard Comparison**: Shows the four core metrics across context sizes for multiple models
+- **Rounds Plotting** (`--plot-rounds`): Creates separate lines for each test round (R1, R2, R3, etc.) plus the average (AVG), visualizing variance between individual generations
+- **Enhanced Statistical Analysis** (`--enhanced`): Creates a comprehensive 4-panel dashboard with:
+  - Composite degradation score with 95% confidence intervals
+  - Consistency/variance indicator (coefficient of variation)
+  - Effect size visualization (rank-biserial correlation)
+  - Statistical significance map with multiple comparison correction
 
 ## Understanding the Results
 
@@ -227,6 +238,39 @@ The vocabulary diversity drops at 16K (becomes less diverse), while the Cloze sc
 Since this test doesn't evaluate coherence, style accuracy, or instruction following, it should not be used as evidence of overall model capability. A good result could be achieved by the model generating well-structured, diverse nonsense.
 
 The test is meant as a starting point and as a simple and easily readable indicator of output consistency across context sizes.
+
+### Enhanced Statistical Analysis
+
+The `--enhanced` mode provides rigorous statistical analysis for determining if degradation is real or just random variation:
+
+**Panel 1: Composite Degradation Score**
+- Combines all four metrics into a single 0-100 score (higher = more degradation)
+- Shows 95% bootstrap confidence intervals
+- Color-coded zones: green (no degradation), yellow (mild), red (severe)
+- Significant degradation points marked with red X (sized by effect size)
+- Displays Spearman correlation trend analysis
+
+**Panel 2: Consistency Indicator**
+- Coefficient of variation (CV) shows how consistent performance is at each context size
+- Higher CV = less reliable/more variable performance
+- Bars exceeding CV=0.15 threshold shown in red
+
+**Panel 3: Effect Size Visualization**
+- Shows magnitude of difference vs baseline using rank-biserial correlation
+- Color-coded: green (small <0.3), yellow (medium 0.3-0.5), red (large >0.5)
+- Effect size tells you if statistical significance is practically meaningful
+
+**Panel 4: Statistical Significance Map**
+- Mann-Whitney U test comparing each context size to baseline
+- Includes Holm-Bonferroni multiple comparison correction
+- Green circle = no change, yellow triangle = marginal (p≤0.05), red X = significant (p≤0.01)
+- Summary shows: degradation detected (yes/no), max effect size, number of significant points
+
+**When to use Enhanced mode:**
+- You need statistical confidence that degradation is real, not random
+- You're comparing models and need effect sizes, not just visual trends
+- You have sufficient rounds (10+ recommended) for statistical power
+- You want to publish/present results with proper statistical backing
 
 ## Text Choice
 
@@ -265,7 +309,7 @@ options:
                         Path to Dale-Chall easy words list (default: easy_words.txt)
   --max-context MAX_CONTEXT
                         Maximum context length to test (auto-detect for KoboldCpp)
-  --rounds ROUNDS       Number of test rounds per context length (default: 3)
+  --rounds ROUNDS       Number of test rounds per context length (default: 10)
   --divisions DIVISIONS
                         Number of context divisions between tiers as power of 2
   --model-name MODEL_NAME
@@ -286,7 +330,8 @@ options:
 ### generate_plot.py
 
 ```bash
-usage: generate_plot.py [-h] [--plot-rounds] [--dpi DPI] inputs [inputs ...]
+usage: generate_plot.py [-h] [--plot-rounds] [--enhanced] [--dpi DPI]
+                        inputs [inputs ...]
 
 Create comparison plots from context test results
 
@@ -295,9 +340,13 @@ positional arguments:
 
 options:
   -h, --help     Show this help message and exit
-  --plot-rounds  Plot individual rounds alongside averages
+  --plot-rounds  Plot individual rounds alongside averages (requires results directories)
+  --enhanced     Create enhanced plots with composite scores and statistical analysis
+                 (requires single results directory, 10+ rounds recommended)
   --dpi DPI      Output image resolution (default: 300)
 ```
+
+**Note:** The `--enhanced` flag requires exactly one results directory input and works best with 10+ rounds for statistical power.
 
 ## Examples
 
@@ -348,8 +397,11 @@ uv run generate_plot.py results/model1-test/ results/model2-test/
 # Plot individual rounds to see variance
 uv run generate_plot.py results/model-test/ --plot-rounds
 
-# High-resolution output
-uv run generate_plot.py results/model1-test/ results/model2-test/ --dpi 600
+# Enhanced statistical analysis with composite scores
+uv run generate_plot.py results/model-test/ --enhanced
+
+# High-resolution enhanced analysis
+uv run generate_plot.py results/model-test/ --enhanced --dpi 600
 ```
 
 ## Architecture
@@ -363,8 +415,9 @@ The codebase is modular with clear separation of concerns:
 - **streaming_api.py** - API client wrapper
 - **readability_tests.py** - Metrics calculation (Cloze, vocabulary diversity, etc.)
 - **outlier_detection.py** - IQR-based outlier detection for retries
+- **statistical_analysis.py** - Advanced statistical analysis (composite scores, significance testing, effect sizes)
 - **main.py** - Core orchestration and text processing
-- **generate_plot.py** - Plotting and visualization
+- **generate_plot.py** - Plotting and visualization (standard and enhanced modes)
 
 ## Environment Variables
 
@@ -384,7 +437,7 @@ The following environment variables are supported:
 
 **Divisions**: Allow you to add more data points to the normal span of context windows by adding more continuations in between. For example, you normally have [2048, 4096, 8192] as data points; setting divisions to 1 would give you [2048, 2896, 4096, 5793, 8192] where the middle values are equidistant powers of two. Divisions must be a power of 2.
 
-**Rounds**: The number of times a test is repeated at each context size. They are averaged to mitigate the randomness of LLM generations. At least 3 are recommended. Individual rounds can be plotted using `--plot-rounds` to visualize variance.
+**Rounds**: The number of times a test is repeated at each context size. They are averaged to mitigate the randomness of LLM generations. The default is 10 rounds, which provides sufficient statistical power for detecting moderate degradation effects. Minimum of 3 recommended for basic testing. Individual rounds can be plotted using `--plot-rounds` to visualize variance.
 
 **Outlier Detection**: If a generation at a context size produces statistical outliers (based on IQR analysis), it will be automatically retried. This helps ensure consistent, reliable results.
 
@@ -392,22 +445,3 @@ The following environment variables are supported:
 
 **Model ID**: Each test run has a unique identifier (timestamp by default, or custom via `--model-id`). If you try to run a test with an existing model ID, the tool will error to prevent accidental data loss. Either delete the old directory, use a different `--model-id`, or let the system auto-generate a timestamp.
 
-## Documentation
-
-- **CLAUDE.md** - Project overview and developer guidance
-- **REFACTORING.md** - Architecture and refactoring documentation
-- **IMPROVEMENTS.md** - Recent feature additions and improvements
-- **nim_models.md** - NVIDIA NIM model and tokenizer reference
-
-## Contributing
-
-This project is designed to be easily extensible:
-
-- Add new tokenizer backends to `tokenizer_utils.py`
-- Add new metrics to `readability_tests.py`
-- Add new plot types to `generate_plot.py`
-- Add custom retry strategies to `benchmark_runner.py`
-
-## License
-
-See LICENSE file for details.
