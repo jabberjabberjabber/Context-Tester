@@ -1,148 +1,413 @@
 # Context Window Testing
 
-This project utilizes a novel method for evaluating an LLM's ability to utilize different sized context windows.  It is especially concerned with style, creativity and degradation of long form outputs as the amount of tokens fill larger context windows. 
+This project utilizes a novel method for evaluating an LLM's ability to utilize different sized context windows. It is especially concerned with style, creativity and degradation of long form outputs as the amount of tokens fill larger context windows.
 
 Instead of checking for recall or correctness, the test fills the context with a text and asks the model to continue the text as if it were the original writer. It then evaluates the model's output using basic metrics for readability, sentence length, and vocabulary diversity.
 
-The purpose is not to provide a benchmark that is definitive, but to provide data points for comparison so that one can see how changes to the model weights and processing effects its creative output across different corpus sizes.
-
-Each test using the same parameters with start at the same place in the text each time for the continuation and applies across models. This allows the tests to be repeatable across different sized contexts within the same set of tests as well across different models or fine tune attempts. 
+The purpose is not to provide a benchmark that is definitive, but to provide data points for comparison so that one can see how changes to the model weights and processing affects its creative output across different corpus sizes.
 
 The script finds a natural break point in the text and then cuts out a set of tokens a bit larger than the largest test size. It will then expand the context window by adding new tokens going backwards from the continuation point. In this way the context window can expand with minimal effect on the model's creative choices. Any changes in style or creativity are then assumed to be from the larger number of tokens in the window, and not from stylistic choices due to the text changing. All of these operations are determined by using the actual tokens after converting the text using the model's own tokenizer, which allows for granular slicing of the context windows.
- 
+
 ## Overview
 
 This repository contains two primary analysis tools:
 
-1. **Readability Tester** (`main.py`) - Measures how LLM output quality degrades as context length increases
-2. **Performance Comparison Tool** (`generate_plot.py`) - Plots the data on to two graphs
+1. **Context Tester** (`main.py`) - Measures how LLM output quality degrades as context length increases
+2. **Performance Comparison Tool** (`generate_plot.py`) - Creates comparison plots from test results
 
 ## Installation
 
 ### Prerequisites
 
-- A large text to use as the basis for continuation
-- Python 3.8 or higher
-- A KoboldCpp API server running a language model and a sentence embeddings model
+- Python 3.13 or higher
+- A large text to use as the basis for continuation (txt, pdf, or html)
+- An OpenAI-compatible API endpoint (KoboldCpp, NVIDIA NIM, OpenAI, etc.)
 
-### Dependencies
+### Setup
 
-Clone repo
+Clone the repository:
 
-```
+```bash
 git clone https://github.com/jabberjabberjabber/Context-Tester
-cd context-tester
+cd Context-Tester
 ```
 
-Install UV and sync:
+Install UV and sync dependencies:
 
 ```bash
 pip install uv
 uv sync
 ```
 
-Ensure you have a running inference instance running a KoboldCpp endpoint that you can connect to. Ensure that you have a properly formatted creative text such as a novel which has at least enough text in it to max out the tokens you are testing for.  
+### API Configuration
 
-```
-koboldcpp --model modelname.gguf --contextsize 32768 --embeddingsmodel all-MiniLM-L6-v2-Q8_0.gguf
+The tool supports multiple ways to provide API credentials:
+
+**Option 1: Environment Variables (Recommended)**
+
+```bash
+# Set API key (checks in order: API_KEY, API_PASSWORD, OPENAI_API_KEY, NVIDIA_API_KEY, NVAPI_KEY)
+export API_KEY=your-api-key-here
+
+# For HuggingFace gated models (like Llama)
+export HF_TOKEN=hf_your-token-here
 ```
 
-Run data collection:
+**Option 2: Command Line Flag**
 
-```
-uv run main.py crime_english.txt --api-url http://localhost:5001
+```bash
+python main.py novel.txt --api-url https://api.endpoint.com --api-password your-api-key
 ```
 
-Wait for the tests to complete. You should now have a csv file and a png file in the directory with the name of the model and the text in it containing the data plots.
+## Quick Start
 
-If you want to compare data for more than one model, run the test for each model and then use generate_plots to run the comparison using the csv files:
+### Using KoboldCpp (Local)
 
+Start KoboldCpp with your model:
+
+```bash
+koboldcpp --model modelname.gguf --contextsize 32768
 ```
-uv run generate_plots.py name-of-first-csv-file.csv name-of-second-csv-file.csv 
+
+Run the test:
+
+```bash
+uv run main.py middlemarch.txt --api-url http://localhost:5001
 ```
-You can put as many as you like and it will plot the data for each of them onto the same graphs.
+
+### Using NVIDIA NIM (Remote)
+
+```bash
+export API_KEY=nvapi-your-key-here
+export HF_TOKEN=hf_your-token-here
+
+uv run main.py middlemarch.txt \
+  --api-url https://integrate.api.nvidia.com \
+  --max-context 131072 \
+  --tokenizer-model "microsoft/phi-4-mini-instruct" \
+  --model-name "microsoft/phi-4-mini-instruct"
+```
+
+### Using OpenAI API
+
+```bash
+export OPENAI_API_KEY=sk-your-key-here
+
+uv run main.py middlemarch.txt \
+  --api-url https://api.openai.com \
+  --model-name "gpt-4" \
+  --max-context 128000
+```
+
+## API Compatibility
+
+The tool works with any OpenAI-compatible API endpoint:
+
+- **KoboldCpp**: Auto-detects model name and max context, uses API tokenization
+- **NVIDIA NIM**: Requires `--tokenizer-model` and `--max-context` parameters
+- **OpenAI**: Requires `--model-name` and `--max-context` parameters
+- **Other OpenAI-compatible APIs**: Use `--api-url` with appropriate parameters
+
+### Tokenizer Support
+
+The system uses a unified tokenizer interface with automatic fallback:
+
+1. **HuggingFace transformers** (primary) - Local tokenization with auto-discovery
+2. **KoboldCpp API** (fallback) - Remote tokenization endpoint
+3. **Tiktoken** (fallback) - OpenAI tokenization
+
+For gated HuggingFace repositories (like Llama models), set the `HF_TOKEN` environment variable to automatically authenticate.
 
 ## Input Text
 
-Texts can be any type supported by extractous such as txt or pdf or html. It can be any formatting but better results are obtained if the paragraphs are separated by a blank line and there is no introduction, index, or any other text in it except the story and chapter headings.
- 
-## Understanding the Metrics
+Texts can be any type supported by extractous such as txt, pdf, or html. It can be any formatting but better results are obtained if the paragraphs are separated by a blank line and there is no introduction, index, or any other text in it except the story and chapter headings.
 
-## Reading the Graphs
+## Running Tests
 
-This is pretty simple. They should be relatively flat. Any significant move up or down is an indicator of inconsistency.  
+### Basic Test Execution
 
-The **left-hand** graph goes up when the model outputs more diverse vocabulary, while **right-hand** graph goes up when the model outputs more simple and predictable text.
+```bash
+# Run test with default settings
+uv run main.py novel.txt --api-url http://localhost:5001
 
-The below graphs show this effect:
+# Custom context sizes and rounds
+uv run main.py novel.txt --max-context 16384 --rounds 5 --divisions 1
 
-![Cohere Aya](Cohere_aya-23-8B-Q6_K-middlemarch.txt-3r1d.png)
+# Generation parameters
+uv run main.py text.txt --max-tokens 1024 --temp 0.8 --top-k 50
 
-The first plot shows a slight downward slope and then a crash at 16K, while the second one shows an initial lowering of predictability followed by a steady rise. Both plots indicate what looks like a recovery at the end, but this is actually misleading -- when both graphs are taken together you can see that what looks to be an aberrant blip at 16K which immediately rebounds is actually the logical progression as seen by the steady rise of the cloze score on the right. 
+# Skip smaller context sizes
+uv run main.py novel.txt --start-context 8192
+```
 
-Here is a counter example:
+### Test Parameters
+
+- **`--rounds`**: Number of generations per context size (default: 3). Averaged to reduce randomness.
+- **`--divisions`**: Add test points between power-of-2 context sizes (must be power of 2)
+- **`--max-context`**: Maximum context length to test (auto-detected for KoboldCpp)
+- **`--start-context`**: Skip testing context sizes below this value
+- **`--model-id`**: Custom identifier for this test run (defaults to timestamp)
+
+### Results Structure
+
+Tests create a directory in `results/` with the format:
+
+```
+results/org-model-text-timestamp/
+├── metadata.json                    # Experiment configuration
+├── context_2048_results.json        # Results for each context size
+├── context_4096_results.json
+├── ...
+├── degradation_analysis.json        # Statistical analysis
+├── model-text-timestamp.csv         # Aggregate data for plotting
+├── model-text-timestamp_generations.txt  # All LLM outputs
+└── model-text-timestamp.png         # Performance graphs
+```
+
+## Analysis and Plotting
+
+### Post-Test Analysis
+
+After a test completes, results are automatically analyzed and plotted. You can reanalyze existing results:
+
+```bash
+# Reanalyze and regenerate plots
+uv run main.py --analyze results/model-text-20250108-123456
+
+# Reanalyze without regenerating plots
+uv run main.py --reanalyze results/model-text-20250108-123456
+```
+
+### Comparison Plots
+
+Compare multiple test runs:
+
+```bash
+# Compare using CSV files
+uv run generate_plot.py model1-results.csv model2-results.csv model3-results.csv
+
+# Compare using results directories
+uv run generate_plot.py results/model1-test/ results/model2-test/
+
+# Plot individual rounds alongside averages
+uv run generate_plot.py results/model-test/ --plot-rounds
+```
+
+The `--plot-rounds` flag will create separate lines for each test round (R1, R2, R3, etc.) plus the average (AVG), allowing you to visualize the variance between individual generations.
+
+## Understanding the Results
+
+### The Four Metrics
+
+The tool evaluates four key metrics:
+
+1. **Vocabulary Diversity** (top-left) - Higher = less diverse wording (inverted y-axis)
+2. **Cloze Score** (top-right) - Higher = more basic/predictable text
+3. **Adjacent Sentence Similarity** (bottom-left) - Higher = more similar sentences
+4. **Bigram Repetition Rate** (bottom-right) - Higher = more repetitive patterns
+
+### Reading the Graphs
+
+Ideally, all four graphs should show relatively flat lines across context sizes. Any significant movement up or down indicates inconsistency in the model's output as context grows.
+
+**Good Result (Flat Lines):**
 
 ![Broken Tutu](Broken-Tutu-24B.Q6_K-middlemarch.txt-3r1d.png)
 
-This is an ideal result without any large spikes up or down.
+This shows consistent performance across all context sizes.
 
-Since this test doesn't evaluate coherence, style, accuracy, or instruction following, it should not be used as evidence of model capability. A good result could be achieved by the model generating well-structured, diverse nonsense. 
+**Degradation Example:**
 
-The test is meant as a starting point and as a simple and easily readable indicator of consistency.
+![Cohere Aya](Cohere_aya-23-8B-Q6_K-middlemarch.txt-3r1d.png)
+
+The vocabulary diversity drops at 16K (becomes less diverse), while the Cloze score steadily rises (becomes more predictable). This indicates context-length-related degradation.
+
+### Important Limitations
+
+Since this test doesn't evaluate coherence, style accuracy, or instruction following, it should not be used as evidence of overall model capability. A good result could be achieved by the model generating well-structured, diverse nonsense.
+
+The test is meant as a starting point and as a simple and easily readable indicator of output consistency across context sizes.
 
 ## Text Choice
 
-Here is a comparison of the same model with Crime and Punishment vs Middlemarch:
+Different reference texts can produce different results. Here is a comparison of the same model tested with Crime and Punishment vs Middlemarch:
 
 ![Text choice](zai-org_GLM-4-9B-0414-Q6_K-crime_english_with-zai-org_GLM-4-9B-0414-Q6_K-3rounds_1divs-middlemarch.png)
- 
+
 ## Detailed Usage
 
+### main.py
+
 ```bash
-usage: main.py [-h] [--api-url API_URL] [--api-password API_PASSWORD] [--word-list WORD_LIST] [--max-context MAX_CONTEXT] [--rounds ROUNDS] [--divisions DIVISIONS] [--model-name MODEL_NAME]
-               [--max-tokens MAX_TOKENS] [--temp TEMP] [--top-k TOP_K] [--top-p TOP_P] [--min-p MIN_P] [--rep-pen REP_PEN] [--start-context START_CONTEXT]
-               input_file
+usage: main.py [-h] [--api-url API_URL] [--api-password API_PASSWORD]
+               [--tokenizer-model TOKENIZER_MODEL] [--word-list WORD_LIST]
+               [--max-context MAX_CONTEXT] [--rounds ROUNDS]
+               [--divisions DIVISIONS] [--model-name MODEL_NAME]
+               [--model-id MODEL_ID] [--max-tokens MAX_TOKENS]
+               [--temp TEMP] [--top-k TOP_K] [--top-p TOP_P]
+               [--start-context START_CONTEXT] [--analyze ANALYZE]
+               [--reanalyze REANALYZE]
+               [input_file]
 
 Test LLM readability degradation across context lengths with fixed continuation point
 
 positional arguments:
-  input_file            Path to reference text file (any format supported by extractous)
+  input_file            Path to reference text file (txt, pdf, html via extractous)
 
 options:
-  -h, --help            show this help message and exit
-  --api-url API_URL     API URL for the LLM service
+  -h, --help            Show this help message and exit
+  --api-url API_URL     API URL for OpenAI-compatible endpoint
   --api-password API_PASSWORD
-                        API key/password if required
+                        API key/password (or use environment variables)
+  --tokenizer-model TOKENIZER_MODEL
+                        HuggingFace tokenizer model name (auto-detect if not specified)
   --word-list WORD_LIST
-                        Path to Dale-Chall easy words list
+                        Path to Dale-Chall easy words list (default: easy_words.txt)
   --max-context MAX_CONTEXT
-                        Maximum context length to test (auto-detect if not specified)
+                        Maximum context length to test (auto-detect for KoboldCpp)
   --rounds ROUNDS       Number of test rounds per context length (default: 3)
   --divisions DIVISIONS
-                        Number of context divisions between tiers as a power of 2
+                        Number of context divisions between tiers as power of 2
   --model-name MODEL_NAME
-                        Override model name (auto-detected if not provided)
+                        Override model name (auto-detected for KoboldCpp)
+  --model-id MODEL_ID   Custom test identifier (defaults to timestamp)
   --max-tokens MAX_TOKENS
-                        Maximum tokens to generate (default: 512)
+                        Maximum tokens to generate (default: 1024)
   --temp TEMP           Generation temperature (default: 1.0)
   --top-k TOP_K         Top-k sampling (default: 100)
   --top-p TOP_P         Top-p sampling (default: 1.0)
-  --min-p MIN_P         Min-p sampling (default: 0.1)
-  --rep-pen REP_PEN     Repetition penalty (default: 1.01)
   --start-context START_CONTEXT
                         Starting context size in tokens (skip smaller sizes)
-
-Examples:
-  python main.py novel.txt --api-url http://localhost:5001
-  python main.py document.pdf --max-context 16384 --model-name "MyModel"
-  python main.py text.txt --word-list dale_chall_words.txt --rounds 3
-  python main.py novel.txt --rounds 5 --divisions 2 --temp 0.8 --top-k 50
-  python main.py text.txt --max-tokens 1024 --rep-pen 1.05 --min-p 0.05
-  python main.py novel.txt --start-context 8192  # Skip testing small contexts
+  --analyze ANALYZE     Analyze existing results directory and regenerate plots
+  --reanalyze REANALYZE
+                        Reanalyze existing results without regenerating plots
 ```
 
-Notes:
+### generate_plot.py
 
-**Divisions** allow you to add more data points to the normal span of context windows by adding more continuations in between. For example, you normally have [1024, 2048], etc as data points; setting divisions to be 1 would give you [1024, a, 2048] where 'a' is an equidistant number of tokens between 1024 and 2048. These tokens will always be a power of two and divisions must also be a power of 2.
-    
-**Rounds** are the number of times a test is repeated at each tier. They are averaged out to mitigate the randomness of LLM generations. At least 3 are recommended.
+```bash
+usage: generate_plot.py [-h] [--plot-rounds] [--dpi DPI] inputs [inputs ...]
+
+Create comparison plots from context test results
+
+positional arguments:
+  inputs         CSV files or results directories to compare
+
+options:
+  -h, --help     Show this help message and exit
+  --plot-rounds  Plot individual rounds alongside averages
+  --dpi DPI      Output image resolution (default: 300)
+```
+
+## Examples
+
+### Basic Testing
+
+```bash
+# Local KoboldCpp test
+uv run main.py novel.txt --api-url http://localhost:5001
+
+# NVIDIA NIM test with environment variables
+export API_KEY=nvapi-your-key
+export HF_TOKEN=hf_your-token
+uv run main.py novel.txt \
+  --api-url https://integrate.api.nvidia.com \
+  --max-context 131072 \
+  --tokenizer-model "microsoft/phi-4-mini-instruct"
+
+# Custom test parameters
+uv run main.py novel.txt \
+  --rounds 5 \
+  --divisions 1 \
+  --temp 0.8 \
+  --top-k 50 \
+  --max-tokens 1024 \
+  --start-context 8192
+
+# Custom test ID (prevents accidental overwrites)
+uv run main.py novel.txt \
+  --api-url http://localhost:5001 \
+  --model-id "fine-tune-v2"
+```
+
+### Analysis and Plotting
+
+```bash
+# Reanalyze existing results
+uv run main.py --analyze results/model-text-20250108-123456
+
+# Compare multiple models
+uv run generate_plot.py \
+  results/model1-test/model1-test.csv \
+  results/model2-test/model2-test.csv \
+  results/model3-test/model3-test.csv
+
+# Compare using directories (cleaner)
+uv run generate_plot.py results/model1-test/ results/model2-test/
+
+# Plot individual rounds to see variance
+uv run generate_plot.py results/model-test/ --plot-rounds
+
+# High-resolution output
+uv run generate_plot.py results/model1-test/ results/model2-test/ --dpi 600
+```
+
+## Architecture
+
+The codebase is modular with clear separation of concerns:
+
+- **config.py** - Argument parsing and configuration management
+- **tokenizer_utils.py** - Unified tokenization with automatic fallback
+- **file_operations.py** - All file I/O and result management
+- **benchmark_runner.py** - Test execution and retry logic
+- **streaming_api.py** - API client wrapper
+- **readability_tests.py** - Metrics calculation (Cloze, vocabulary diversity, etc.)
+- **outlier_detection.py** - IQR-based outlier detection for retries
+- **main.py** - Core orchestration and text processing
+- **generate_plot.py** - Plotting and visualization
+
+## Environment Variables
+
+The following environment variables are supported:
+
+**API Keys** (checked in order):
+- `API_KEY`
+- `API_PASSWORD`
+- `OPENAI_API_KEY`
+- `NVIDIA_API_KEY`
+- `NVAPI_KEY`
+
+**HuggingFace Token**:
+- `HF_TOKEN` - For accessing gated models (Llama, etc.)
+
+## Notes
+
+**Divisions**: Allow you to add more data points to the normal span of context windows by adding more continuations in between. For example, you normally have [2048, 4096, 8192] as data points; setting divisions to 1 would give you [2048, 2896, 4096, 5793, 8192] where the middle values are equidistant powers of two. Divisions must be a power of 2.
+
+**Rounds**: The number of times a test is repeated at each context size. They are averaged to mitigate the randomness of LLM generations. At least 3 are recommended. Individual rounds can be plotted using `--plot-rounds` to visualize variance.
+
+**Outlier Detection**: If a generation at a context size produces statistical outliers (based on IQR analysis), it will be automatically retried. This helps ensure consistent, reliable results.
+
+**Lazy Directory Creation**: Output directories are only created after the first successful generation. This prevents empty folders from being created when API connection or configuration errors occur.
+
+**Model ID**: Each test run has a unique identifier (timestamp by default, or custom via `--model-id`). If you try to run a test with an existing model ID, the tool will error to prevent accidental data loss. Either delete the old directory, use a different `--model-id`, or let the system auto-generate a timestamp.
+
+## Documentation
+
+- **CLAUDE.md** - Project overview and developer guidance
+- **REFACTORING.md** - Architecture and refactoring documentation
+- **IMPROVEMENTS.md** - Recent feature additions and improvements
+- **nim_models.md** - NVIDIA NIM model and tokenizer reference
+
+## Contributing
+
+This project is designed to be easily extensible:
+
+- Add new tokenizer backends to `tokenizer_utils.py`
+- Add new metrics to `readability_tests.py`
+- Add new plot types to `generate_plot.py`
+- Add custom retry strategies to `benchmark_runner.py`
+
+## License
+
+See LICENSE file for details.
