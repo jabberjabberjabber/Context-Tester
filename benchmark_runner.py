@@ -7,8 +7,8 @@ Handles test runs, retries, and outlier detection.
 
 from typing import List, Dict, Any
 from datetime import datetime
-from readability_tests import analyze_text_comprehensive
-from outlier_detection import analyze_round_outliers
+from src.readability_tests import analyze_text_comprehensive
+from src.outlier_detection import analyze_round_outliers
 
 
 def run_benchmarks(
@@ -38,7 +38,7 @@ def run_benchmarks(
     round_num = 1
 
     while round_num <= rounds:
-        if retries >= max_retries:
+        if retries > max_retries:
             print(f"Maximum number of retries reached ({retries}) for this tier")
             return []
 
@@ -61,11 +61,13 @@ def run_benchmarks(
         except Exception as e:
             print(f"WARNING: Generation failed for round {round_num}: {e}")
             retries += 1
+            return False
             continue
 
         if not continuation:
             print(f"WARNING: No continuation generated for round {round_num}")
             retries += 1
+            return False
             continue
 
         round_end_time = datetime.now()
@@ -79,6 +81,7 @@ def run_benchmarks(
         if token_count < min_tokens and not ignore_min_tokens:
             print(f"Not enough tokens generated for round {round_num} ({token_count} < {min_tokens})")
             retries += 1
+            return False
             continue
 
         # Analyze continuation
@@ -87,11 +90,13 @@ def run_benchmarks(
         except Exception as e:
             print(f"WARNING: Analysis failed for round {round_num}: {e}")
             retries += 1
+            return False
             continue
 
         if not analysis:
             print(f"WARNING: Analysis returned no results for round {round_num}")
             retries += 1
+            return False
             continue
 
         # Store successful result
@@ -203,7 +208,7 @@ def run_context_test_with_retries(
     Returns:
         True if successful, False otherwise
     """
-    from file_operations import save_context_results, average_results
+    from src.file_operations import save_context_results, average_results
 
     retry_count = 0
 

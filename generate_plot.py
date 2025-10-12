@@ -30,7 +30,7 @@ import argparse
 import os
 import re
 from pathlib import Path
-from file_operations import (
+from src.file_operations import (
     get_dataset_name_from_csv,
     load_csv_for_plotting,
     generate_plot_filename,
@@ -342,16 +342,19 @@ def calculate_axis_ranges(data, dataset_names):
                 cloze_values.extend(vals)
     
     if cloze_values:
-        cloze_min, cloze_max = min(cloze_values), max(cloze_values)
-        cloze_range = cloze_max - cloze_min
-        if cloze_min > 15:
+        filtered_values = [v for v in cloze_values if 10 <= v <= 45]
+        
+        if not filtered_values:
             ranges['cloze_score'] = (15, 40)
-        elif cloze_max > 35:
-            ranges['cloze_score'] = (cloze_max - 24, cloze_max + 1) 
-        else: 
-            ranges['cloze_score'] = (cloze_min - 1, cloze_min + 24)
-    else:
-        ranges['cloze_score'] = (15, 40)
+        else:
+            cloze_min, cloze_max = min(filtered_values), max(filtered_values)
+            
+            if cloze_min > 15:
+                ranges['cloze_score'] = (15, 40)
+            elif cloze_max > 35:
+                ranges['cloze_score'] = (cloze_max - 24, cloze_max + 1)
+            else:
+                ranges['cloze_score'] = (cloze_min - 1, cloze_min + 24)
     
     # Adjacent coherence
     coherence_values = []
@@ -657,8 +660,8 @@ def create_enhanced_statistical_plots(results_dir_path, output_file='enhanced_an
         output_file: Path for output PNG file
         dpi: Resolution for output image
     """
-    from file_operations import load_all_context_results, load_experiment_metadata
-    from statistical_analysis import comprehensive_statistical_analysis
+    from src.file_operations import load_all_context_results, load_experiment_metadata
+    from src.statistical_analysis import comprehensive_statistical_analysis
     import matplotlib
     matplotlib.use('Agg')
 

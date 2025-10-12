@@ -19,7 +19,7 @@ from extractous import Extractor
 
 # Local modules
 from config import parse_arguments, create_generation_params, create_experiment_metadata
-from file_operations import (
+from src.file_operations import (
     create_output_directory,
     save_experiment_metadata,
     save_context_results,
@@ -29,9 +29,9 @@ from file_operations import (
     save_generation_outputs,
     save_analysis_results
 )
-from streaming_api import StreamingAPIClient
+from src.streaming_api import StreamingAPIClient
 from benchmark_runner import run_context_test_with_retries
-from readability_tests import initialize_word_list
+from src.readability_tests import initialize_word_list
 from generate_plot import make_png
 
 
@@ -50,7 +50,7 @@ def normalize_content(content: str) -> str:
     paragraphs = text.split('\n\n')
 
     result = '\n\n'.join(para.replace('\n', ' ') for para in paragraphs)
-    result = result.replace('\n\n', '\n\n    ')
+    #result = result.replace('\n\n', '\n\n    ')
     return result
 
 
@@ -392,7 +392,7 @@ def reanalyze(input_dir: Path, client: StreamingAPIClient, model_id: Optional[st
     Returns:
         Path to new output directory with reanalyzed results
     """
-    from readability_tests import analyze_text_comprehensive
+    from src.readability_tests import analyze_text_comprehensive
 
     print(f"\n{'='*60}")
     print("RE-ANALYZING EXISTING RESULTS")

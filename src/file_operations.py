@@ -157,7 +157,7 @@ def load_individual_rounds_for_plotting(results_dir: Path) -> tuple[List[dict], 
 
 def average_results(round_results: List[Dict]) -> Dict[str, Any]:
     """Average results across multiple rounds."""
-    from readability_tests import reading_level_from_cloze
+    from src.readability_tests import reading_level_from_cloze
 
     if not round_results:
         return {}

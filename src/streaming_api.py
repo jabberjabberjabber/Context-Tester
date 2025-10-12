@@ -8,9 +8,9 @@ Supports KoboldCpp, NVIDIA NIM, and generic OpenAI-compatible APIs.
 from typing import Optional, List
 import json
 import requests
-from find_last_sentence import find_last_sentence_ending
-from chunker_regex import chunk_regex
-from tokenizer_utils import UnifiedTokenizer
+from src.find_last_sentence import find_last_sentence_ending
+from src.chunker_regex import chunk_regex
+from src.tokenizer_utils import UnifiedTokenizer
 
 
 class StreamingAPIClient:
@@ -254,9 +254,10 @@ class StreamingAPIClient:
         self,
         context: str,
         max_tokens: int = 1024,
-        temperature: float = 1.0,
-        top_k: int = 100,
-        top_p: float = 1.0
+        temperature: float = 0.1,
+        top_k: int = None,
+        top_p: float = None,
+        rep_pen: float = None
     ) -> str:
         """Generate text continuation from context."""
         instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
@@ -265,7 +266,7 @@ class StreamingAPIClient:
             return None
 
         context = find_last_sentence_ending(context)
-        print(f"Starting from: {context[-100:]}")
+        print(f"Starting from: {context[-500:]}")
 
         payload = {
             "messages": [
@@ -274,9 +275,14 @@ class StreamingAPIClient:
             "model": self.model_name,
             "max_tokens": max_tokens,
             "temperature": temperature,
-            "top_p": top_p,
             "stream": True,
         }
+        if top_p:
+            payload["top_p"] = top_p
+        if top_k:
+            payload["top_k"] = top_k
+        if rep_pen:
+            payload["rep_pen"] = rep_pen
 
         result = []
 

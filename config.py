@@ -35,6 +35,9 @@ Examples:
   python main.py text.txt --rounds 3 --start-context 8192
   python main.py --analyze results/model-text-20241201-123456
   python main.py --reanalyze results/model-text-20241201-123456
+Important:  
+  Always set top-k, top-p, rep-pen when using KoboldCpp.
+  If you set a top-k, top-p, or rep-pen when using an API that does not support it, it will fail.
 """
     )
 
@@ -149,22 +152,28 @@ Examples:
     parser.add_argument(
         '--temp',
         type=float,
-        default=1.0,
-        help='Generation temperature (default: 1.0)'
+        default=0.1,
+        help='Generation temperature (default: 0.1)'
     )
 
     parser.add_argument(
         '--top-k',
         type=int,
-        default=100,
-        help='Top-k sampling (default: 100)'
+        default=None,
+        help='Top-k sampling'
     )
 
     parser.add_argument(
         '--top-p',
         type=float,
-        default=1.0,
-        help='Top-p sampling (default: 1.0)'
+        default=None,
+        help='Top-p sampling'
+    )
+    parser.add_argument(
+        '--rep-pen',
+        type=float,
+        default=None,
+        help='Rep-pen sampling'
     )
 
     # Output configuration
@@ -187,7 +196,7 @@ Examples:
 
 def validate_arguments(args):
     """Validate argument combinations and constraints."""
-    from readability_tests import is_power_of_two
+    from src.readability_tests import is_power_of_two
 
     # Validate mode combinations
     if args.analyze and args.reanalyze:
@@ -225,6 +234,7 @@ def create_generation_params(args) -> Dict[str, Any]:
         'temperature': args.temp,
         'top_k': args.top_k,
         'top_p': args.top_p,
+        'rep_pen': args.rep_pen
     }
 
 
