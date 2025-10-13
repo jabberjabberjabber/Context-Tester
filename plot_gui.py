@@ -451,6 +451,18 @@ class PlotGUI:
                     )
                     self.plot_lines[line] = dataset_name
 
+                # Add ground truth reference line if available
+                # Check if any selected dataset has ground truth for this metric
+                for dataset_name in selected_datasets:
+                    if dataset_name in self.dataset_metadata:
+                        metadata = self.dataset_metadata[dataset_name]
+                        ground_truth = metadata.get('ground_truth_analysis', {})
+                        if metric in ground_truth:
+                            gt_value = ground_truth[metric]
+                            ax.axhline(y=gt_value, color='green', linestyle='--',
+                                     linewidth=2, label='Ground Truth', alpha=0.7)
+                            break  # Only add once per plot
+
                 # Format subplot
                 ax.set_xscale('log')
                 ax.set_xlabel('Context Length', fontsize=10)

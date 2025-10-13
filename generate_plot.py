@@ -404,21 +404,22 @@ def calculate_axis_ranges(data, dataset_names):
     
     return ranges
     
-def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300, silent=False):
+def create_comparison_plots(data, dataset_names, output_file='comparison.png', dpi=300, silent=False, ground_truth=None):
     """ Create comprehensive performance comparison plots for multiple datasets.
-    
+
     Creates four plots in a 2x2 layout:
     1. Vocabulary Diversity (creativity metric)
     2. Cloze Score (degradation metric)
     3. Adjacent Coherence (text quality metric)
     4. Bigram Repetition Rate (repetition metric)
-    
+
     Args:
         data: Merged dataframe with all dataset metrics
         dataset_names: List of dataset names
         output_file: Path for output PNG file
         dpi: Resolution for output image
         silent: If True, suppress print statements
+        ground_truth: Optional dict with ground truth metrics for reference lines
     """
     # Set backend to Agg for headless operation
     import matplotlib
@@ -469,6 +470,14 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
         ax1.set_ylim(ranges['vocab_diversity'])
     ax1.invert_yaxis()
     ax1.grid(True, alpha=0.3)
+
+    # Add ground truth reference line
+    if ground_truth and 'vocabulary_diversity' in ground_truth:
+        gt_value = ground_truth['vocabulary_diversity']
+        ax1.axhline(y=gt_value, color='green', linestyle='--', linewidth=2,
+                   label='Ground Truth', alpha=0.7)
+        plotted_any_data = True
+
     if plotted_any_data:
         # Use smaller font and multiple columns for many datasets
         ncols = 1 if len(dataset_names) <= 6 else 2
@@ -498,6 +507,14 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     if 'cloze_score' in ranges:
         ax2.set_ylim(ranges['cloze_score'])
     ax2.grid(True, alpha=0.3)
+
+    # Add ground truth reference line
+    if ground_truth and 'cloze_score' in ground_truth:
+        gt_value = ground_truth['cloze_score']
+        ax2.axhline(y=gt_value, color='green', linestyle='--', linewidth=2,
+                   label='Ground Truth', alpha=0.7)
+        has_cloze_data = True
+
     if has_cloze_data:
         ncols = 1 if len(dataset_names) <= 6 else 2
         fontsize = 8 if len(dataset_names) <= 6 else 6
@@ -526,6 +543,14 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     if 'adjacent_coherence' in ranges:
         ax3.set_ylim(ranges['adjacent_coherence'])
     ax3.grid(True, alpha=0.3)
+
+    # Add ground truth reference line
+    if ground_truth and 'adjacent_coherence' in ground_truth:
+        gt_value = ground_truth['adjacent_coherence']
+        ax3.axhline(y=gt_value, color='green', linestyle='--', linewidth=2,
+                   label='Ground Truth', alpha=0.7)
+        has_coherence_data = True
+
     if has_coherence_data:
         ncols = 1 if len(dataset_names) <= 6 else 2
         fontsize = 8 if len(dataset_names) <= 6 else 6
@@ -557,6 +582,14 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
     if 'bigram_repetition' in ranges:
         ax4.set_ylim(ranges['bigram_repetition'])
     ax4.grid(True, alpha=0.3)
+
+    # Add ground truth reference line
+    if ground_truth and 'bigram_repetition_rate' in ground_truth:
+        gt_value = ground_truth['bigram_repetition_rate']
+        ax4.axhline(y=gt_value, color='green', linestyle='--', linewidth=2,
+                   label='Ground Truth', alpha=0.7)
+        has_bigram_data = True
+
     if has_bigram_data:
         ncols = 1 if len(dataset_names) <= 6 else 2
         fontsize = 8 if len(dataset_names) <= 6 else 6
@@ -577,14 +610,15 @@ def create_comparison_plots(data, dataset_names, output_file='comparison.png', d
         print(f"Plot saved to: {output_file}")
     plt.close()
 
-def make_png(enhanced_results, output_file_path, silent=True):
+def make_png(enhanced_results, output_file_path, silent=True, ground_truth=None):
     """ Generate PNG plots from enhanced_results data.
-    
+
     Args:
         enhanced_results: List of dictionaries from CSV writer
         output_file_path: Path where CSV would be written (used to derive PNG names)
         silent: If True, suppress most output
-        
+        ground_truth: Optional dict with ground truth metrics for reference lines
+
     Returns:
         True if successful, False otherwise
     """
@@ -606,21 +640,22 @@ def make_png(enhanced_results, output_file_path, silent=True):
         output_dir = output_path.parent
         main_plot_file = output_dir / f"{base_output_path}.png"
         plot_file_with_error_bars = output_dir / f"{base_output_path}_stddev.png"
-        
+
         # Create single-dataset merged format expected by plotting functions
         data = df.copy()
         dataset_names = [dataset_name]
-        
+
         # Rename columns to match expected format
         columns_to_rename = [col for col in data.columns if col != 'context_length']
         for col in columns_to_rename:
             data = data.rename(columns={col: f"{col}_{dataset_name}"})
-        
+
         # Create plots (convert Path to string for create_comparison_plots)
-        create_comparison_plots(data, dataset_names, str(main_plot_file), silent=silent)
-        
+        create_comparison_plots(data, dataset_names, str(main_plot_file),
+                              dpi=300, silent=silent, ground_truth=ground_truth)
+
         return True
-        
+
     except Exception as e:
         if not silent:
             print(f"Error creating plots: {e}")

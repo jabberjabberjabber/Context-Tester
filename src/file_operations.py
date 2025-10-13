@@ -278,6 +278,33 @@ def save_generation_outputs(results_dir: Path, metadata: dict, model_id: Optiona
         f.write(f"Generated: {datetime.now().isoformat()}\n")
         f.write("=" * 80 + "\n\n")
 
+        # Include ground truth if available
+        ground_truth = metadata.get('ground_truth_analysis', {})
+        if ground_truth:
+            f.write("\n" + "=" * 80 + "\n")
+            f.write("GROUND TRUTH (Source Text Continuation)\n")
+            f.write("=" * 80 + "\n")
+            f.write("This is the actual continuation from the source text at the continuation point.\n")
+            f.write("Use this as a baseline for comparison with generated outputs.\n\n")
+
+            # Get ground truth text from first context (they should all have the same ground truth)
+            ground_truth_text = None
+            for data in context_results:
+                context_info = data.get('context_info', {})
+                if 'ground_truth_text' in context_info:
+                    ground_truth_text = context_info['ground_truth_text']
+                    break
+
+            if ground_truth_text:
+                f.write(f"Ground Truth Metrics:\n")
+                f.write(f"  Cloze Score: {ground_truth.get('cloze_score', 'N/A')}\n")
+                f.write(f"  Vocabulary Diversity: {ground_truth.get('vocabulary_diversity', 'N/A')}\n")
+                f.write(f"  Reading Level: {ground_truth.get('reading_level', 'N/A')}\n")
+                f.write(f"  Avg Sentence Length: {ground_truth.get('avg_sentence_length', 'N/A')}\n")
+                f.write("-" * 60 + "\n")
+                f.write(ground_truth_text)
+                f.write("\n" + "=" * 80 + "\n\n")
+
         for data in context_results:
             context_length = data['context_length']
             rounds = data.get('individual_rounds', [])

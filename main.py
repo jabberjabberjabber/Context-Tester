@@ -57,7 +57,7 @@ def normalize_content(content: str) -> str:
 def load_reference_text(file_path: str) -> str:
     """Load reference text from file (supports txt, pdf, html)."""
     extractor = Extractor()
-
+    extractor = extractor.set_extract_string_max_length(999999999)
     content, metadata = extractor.extract_file_to_string(file_path)
     print(f"Loaded reference text: {metadata.get('resourceName', file_path)}")
     print(f"Content type: {metadata.get('Content-Type', 'Unknown')}")
@@ -72,19 +72,22 @@ def load_reference_text(file_path: str) -> str:
     return normalized_content
 
 
-def prepare_working_tokens(text: str, max_context: int, client: StreamingAPIClient) -> List[str]:
+def prepare_working_tokens(text: str, max_context: int, max_tokens: int, client: StreamingAPIClient) -> List[str]:
     """
     Tokenize text and prepare working token set.
 
     Args:
         text: Reference text to tokenize
         max_context: Maximum context length we'll test
+        max_tokens: Maximum tokens to generate (needed for ground truth)
         client: API client for tokenization
 
     Returns:
-        List of tokens for testing
+        List of tokens for testing (includes extra tokens for ground truth)
     """
-    min_required = int(max_context * 1.2)
+    # Need space for: context + ground_truth continuation
+    # Add extra buffer for ground truth extraction
+    min_required = int(max_context * 1.2) + max_tokens
 
     all_tokens = client.tokenize_text_batched(text)
     if not all_tokens:
@@ -171,11 +174,17 @@ def build_context_window(
     context_length: int,
     client: StreamingAPIClient,
     max_tokens: int
-) -> str:
-    """Build context window from working tokens using backward expansion."""
+) -> tuple[Optional[str], Optional[str]]:
+    """Build context window from working tokens using backward expansion.
+
+    Returns:
+        Tuple of (context_text, ground_truth_text)
+        - context_text: The context window for generation
+        - ground_truth_text: The actual continuation from source text
+    """
     # Calculate overhead tokens
-    system_message = "You are a skilled novelist continuing a story."
-    instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
+    system_message = "\no_think"
+    instruction = """This is an important test of your ability to write long form narratives when burdened with a rich text as starting point. Continue this story without moving towards any conclusions. Continue to develop characters, motivations, world, story, and plot from the text. Maintain the same style, tone, voice, structure, syntax and verbal flourish of the author but strive for diversity, complexity, and creativity. Do not reference these instructions nor ruminate. Begin writing."""
 
     overhead_tokens = client.count_tokens(system_message) + client.count_tokens(instruction) + 20
 
@@ -183,15 +192,31 @@ def build_context_window(
 
     print(f"  Reserved {overhead_tokens} tokens for overhead, {max_tokens} for completion")
 
-    # Convert tokens to text
-    target_tokens = working_tokens[-adjusted_length:]
+    # Extract both context and ground truth from working_tokens
+    # Strategy: Use tokens ending at position (-max_tokens) for context,
+    # and the last max_tokens as ground truth
+    # This ensures the continuation point has actual source text following it
+
+    if len(working_tokens) < adjusted_length + max_tokens:
+        print(f"  WARNING: Not enough tokens for ground truth (need {adjusted_length + max_tokens}, have {len(working_tokens)})")
+        return None, None
+
+    # Context: tokens from (-(adjusted_length + max_tokens)) to (-max_tokens)
+    # Ground truth: last max_tokens
+    target_tokens = working_tokens[-(adjusted_length + max_tokens):-max_tokens]
+    ground_truth_tokens = working_tokens[-max_tokens:]
+
     context_text = client.tokens_to_text_batched(target_tokens)
+    ground_truth_text = client.tokens_to_text_batched(ground_truth_tokens)
 
-    if not context_text:
-        return None
+    if not context_text or not ground_truth_text:
+        print(f"  WARNING: Failed to convert tokens to text")
+        return None, None
 
-    print(f"  Context window: {adjusted_length:,} tokens")
-    return context_text
+    print(f"  Context window: {len(target_tokens):,} tokens")
+    print(f"  Ground truth: {len(ground_truth_tokens)} tokens")
+
+    return context_text, ground_truth_text
 
 
 # ================================
@@ -340,7 +365,7 @@ def run_analysis(results_dir: Path, model_id: Optional[str] = None) -> dict:
         Analysis results dictionary
     """
     print(f"\n{'='*60}")
-    print("RUNNING DEGRADATION ANALYSIS")
+    print("RUNNING ANALYSIS")
     print(f"{'='*60}")
 
     metadata = load_experiment_metadata(results_dir)
@@ -370,9 +395,10 @@ def run_analysis(results_dir: Path, model_id: Optional[str] = None) -> dict:
     # Save generation outputs
     save_generation_outputs(results_dir, metadata, model_id)
 
-    # Generate plot
+    # Generate plot with ground truth reference lines
     try:
-        make_png(averaged_results, str(csv_file))
+        ground_truth = metadata.get('ground_truth_analysis')
+        make_png(averaged_results, str(csv_file), ground_truth=ground_truth)
         print(f"Plot saved to: {csv_file.with_suffix('.png')}")
     except Exception as e:
         print(f"Plot generation failed: {e}")
@@ -545,7 +571,7 @@ def run_data_collection(args):
     context_lengths = generate_context_lengths(max_context, args.divisions, args.start_context)
     metadata['context_lengths'] = context_lengths
 
-    working_tokens = prepare_working_tokens(reference_text, max_context, client)
+    working_tokens = prepare_working_tokens(reference_text, max_context, args.max_tokens, client)
 
     # Prepare output directory path (but don't create it yet)
     output_dir = None
@@ -564,9 +590,9 @@ def run_data_collection(args):
         print(f"\n[TEST {i}/{len(context_lengths)}] Context Length: {context_length:,} tokens")
         print("-" * 50)
 
-        # Build context window
+        # Build context window and extract ground truth
         try:
-            context = build_context_window(working_tokens, context_length, client, args.max_tokens)
+            context, ground_truth = build_context_window(working_tokens, context_length, client, args.max_tokens)
         except Exception as e:
             print(f"WARNING: Failed to build context for {context_length} tokens: {e}")
             continue
@@ -580,10 +606,26 @@ def run_data_collection(args):
             'context_length_actual': client.count_tokens(context),
             'context_text_chars': len(context),
             'context_word_count': len(context.split()),
-            'context_preview': context[-500:] if len(context) > 500 else context
+            'context_preview': context[-500:] if len(context) > 500 else context,
+            'ground_truth_text': ground_truth,  # Store for later use
+            'ground_truth_tokens': client.count_tokens(ground_truth) if ground_truth else 0,
+            'ground_truth_chars': len(ground_truth) if ground_truth else 0
         }
 
         print(f"Context built successfully ({len(context.split())} words)")
+
+        # Analyze ground truth on first context (only need to do this once)
+        # Store in metadata for plotting
+        if ground_truth and 'ground_truth_analysis' not in metadata:
+            print(f"Analyzing ground truth continuation...")
+            from src.readability_tests import analyze_text_comprehensive
+            try:
+                ground_truth_analysis = analyze_text_comprehensive(ground_truth, client)
+                metadata['ground_truth_analysis'] = ground_truth_analysis
+                print(f"  Ground truth Cloze score: {ground_truth_analysis.get('cloze_score', 'N/A')}")
+                print(f"  Ground truth Vocabulary diversity: {ground_truth_analysis.get('vocabulary_diversity', 'N/A')}")
+            except Exception as e:
+                print(f"  WARNING: Failed to analyze ground truth: {e}")
 
         # Create output directory on first successful context (lazy initialization)
         if output_dir is None:

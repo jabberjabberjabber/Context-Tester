@@ -186,6 +186,12 @@ Important:
         default=None,
         help='Optional model identifier for result filenames (e.g., "v2", "fine-tuned")'
     )
+    parser.add_argument(
+        '--seed',
+        type=int,
+        default=None,
+        help='Seed for deterministic generation (where supported)'
+    )
 
     args = parser.parse_args()
 
@@ -244,7 +250,8 @@ def create_generation_params(args) -> Dict[str, Any]:
         'top_k': args.top_k,
         'top_p': args.top_p,
         'rep_pen': args.rep_pen,
-        'no_think': no_think
+        'no_think': no_think,
+        'seed': args.seed
     }
 
 

@@ -57,7 +57,8 @@ def run_benchmarks(
                 temperature=generation_params['temperature'],
                 top_k=generation_params['top_k'],
                 top_p=generation_params['top_p'],
-                no_think=generation_params['no_think']
+                no_think=generation_params['no_think'],
+                seed=generation_params['seed']
             )
         except Exception as e:
             print(f"WARNING: Generation failed for round {round_num}: {e}")

@@ -257,10 +257,11 @@ class StreamingAPIClient:
         temperature: float = 0.1,
         top_k: int = None,
         top_p: float = None,
-        no_think: bool = False
+        no_think: bool = False,
+        seed = None
     ) -> str:
         """Generate text continuation from context."""
-        instruction = """Continue this story for as long as you can. Do not try to add a conclusion or ending, just keep writing as if this were part of the middle of a novel. Maintain the same style, tone, and narrative voice. Focus on developing the plot, characters, and setting naturally."""
+        instruction = """This is an important test of your ability to write long form narratives when burdened with a rich text as starting point. Continue this story without moving towards any conclusions. Continue to develop characters, motivations, world, story, and plot from the text. Maintain the same style, tone, voice, structure, syntax and verbal flourish of the author but strive for diversity, complexity, and creativity. Do not reference these instructions nor ruminate. Begin writing."""
         
         # If no_think is specified send it as a system prompt
         if no_think and ("gemma" not in self.model_name):
@@ -275,7 +276,7 @@ class StreamingAPIClient:
             return None
 
         context = find_last_sentence_ending(context)
-        print(f"Starting from: {context[-500:]}")
+        print(f"\n\n...{context[-250:]}\n\n...")
         payload = {
             "messages": messages,
             "model": self.model_name,
@@ -285,8 +286,8 @@ class StreamingAPIClient:
         }
         if top_p:
             payload["top_p"] = top_p
-        if top_k:
-            payload["top_k"] = top_k
+        if seed:
+            payload["seed"] = seed
         
         result = []
 
