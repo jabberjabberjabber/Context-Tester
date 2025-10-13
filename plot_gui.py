@@ -245,6 +245,15 @@ class PlotGUI:
                 command=self.update_plot
             )
             invert_cb.pack(side="left", padx=(10, 0))
+    def _trigger_canvas_resize(self):
+        """Force a resize event on the canvas to make figure fit properly."""
+        canvas_widget = self.canvas.get_tk_widget()
+        # Generate a Configure event with current dimensions
+        canvas_widget.event_generate(
+            "<Configure>", 
+            width=canvas_widget.winfo_width(), 
+            height=canvas_widget.winfo_height()
+        )
 
     def setup_plot_controls(self, parent):
         """Setup plot appearance controls."""
@@ -288,8 +297,8 @@ class PlotGUI:
         # Update and export buttons
         ttk.Button(
             frame,
-            text="Refresh Plot",
-            command=self.update_plot
+            text="Redraw Plot",
+            command=self.force_redraw
         ).pack(fill=tk.X, pady=2)
 
         ttk.Button(
@@ -298,10 +307,24 @@ class PlotGUI:
             command=self.export_plot
         ).pack(fill=tk.X, pady=2)
 
+
+    def force_redraw(self):
+        """Force complete window redraw"""
+        # Update the canvas widget specifically
+        self.canvas.get_tk_widget().update_idletasks()
+        
+        # Also update the main window if needed
+        if hasattr(self, 'master'):
+            self.master.update_idletasks()
+        elif hasattr(self, 'root'):
+            self.root.update_idletasks()
+
+
     def setup_plot_area(self, parent):
         """Setup the matplotlib plot area."""
         # Create matplotlib figure with 2x2 subplots
         self.fig = Figure(figsize=(12, 9), dpi=self.dpi_var.get())
+        
         self.fig.suptitle('Context Tester - Interactive Analysis', fontsize=14, fontweight='bold')
 
         # Create canvas
@@ -535,6 +558,10 @@ class PlotGUI:
             if (abs(current_size[0] - width) > 0.1 or
                 abs(current_size[1] - height) > 0.1):
                 self.fig.set_size_inches(width, height)
+                self.canvas.get_tk_widget().config(
+                    width=int(width * self.fig.dpi),
+                    height=int(height * self.fig.dpi)
+                )
 
             # Clear figure
             self.fig.clear()
@@ -546,7 +573,7 @@ class PlotGUI:
                     ha='center', va='center',
                     fontsize=14, color='gray'
                 )
-                self.canvas.draw()
+                self.canvas.draw_idle()  # Changed to draw_idle
                 self.canvas.get_tk_widget().update_idletasks()
                 return
 
@@ -557,7 +584,7 @@ class PlotGUI:
                     ha='center', va='center',
                     fontsize=14, color='gray'
                 )
-                self.canvas.draw()
+                self.canvas.draw_idle()  # Changed to draw_idle
                 self.canvas.get_tk_widget().update_idletasks()
                 return
 
@@ -654,15 +681,24 @@ class PlotGUI:
                 if len(selected_datasets) > 1:
                     ax.legend(loc='best', fontsize=7)
 
+           
             self.fig.tight_layout()
-
-            # Force a complete redraw of the canvas
-            self.canvas.draw()
-            self.canvas.get_tk_widget().update_idletasks()
-
+            self.canvas.draw_idle()
+            
+            # Force a resize event to make figure fit canvas
+            self._trigger_canvas_resize()
+            
         except Exception as e:
             messagebox.showerror("Plot Error", f"Failed to update plot:\n{str(e)}")
             traceback.print_exc()
+            
+    def _on_canvas_resize(self, event):
+        """Handle canvas resize events."""
+        if event.width > 1 and event.height > 1:  # Avoid initial small values
+            new_width_inches = event.width / self.fig.dpi
+            new_height_inches = event.height / self.fig.dpi
+            self.fig.set_size_inches(new_width_inches, new_height_inches)
+            self.canvas.draw_idle()
 
     def export_plot(self):
         """Export the current plot to PNG."""

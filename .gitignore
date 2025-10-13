@@ -35,3 +35,9 @@ Neona-12B.Q6_K-quantkv2_with-Neona-12B.Q6_K-quantkv1-Neona-12B.Q6_K-swa-Neona-12
 Neona-12B.Q6_K.png
 delete_empty_tests.ps1
 CLAUDE.md
+REFACTORING.md
+nim_models.md
+IMPROVEMENTS.md
+GUI_README.md
+FEATURES.md
+.claude/settings.local.json

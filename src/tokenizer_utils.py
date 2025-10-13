@@ -52,14 +52,14 @@ class UnifiedTokenizer:
             self.tokenizer, self.backend = self._load_hf_tokenizer(tokenizer_name, hf_token)
 
         # Fallback to API tokenization if HF failed
-        if not self.tokenizer and api_url:
+        if not self.tokenizer and not tokenizer_model:
             if self._test_api_tokenization():
                 self.backend = "koboldcpp_api"
                 print(f"Using KoboldCpp API tokenization")
 
         # Final fallback to tiktoken
-        if not self.tokenizer and not self.backend:
-            self.tokenizer, self.backend = self._load_tiktoken(model_name)
+        #if not self.tokenizer and not self.backend:
+        #    self.tokenizer, self.backend = self._load_tiktoken(model_name)
 
         if not self.tokenizer and not self.backend:
             raise RuntimeError(

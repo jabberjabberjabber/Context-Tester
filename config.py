@@ -140,7 +140,11 @@ Important:
         action="store_true",
         help='Ignore minimum tokens required for successful generation'
     )
-
+    parser.add_argument(
+        '--no-think',
+        action="store_true",
+        help='Ask the model not to use thinking tags'
+    )
     # Generation parameters
     parser.add_argument(
         '--max-tokens',
@@ -225,16 +229,22 @@ def validate_arguments(args):
 
     if args.tokenizer_model and not args.max_context:
         raise ValueError("Must specify --max-context when using --tokenizer-model")
-
+    
 
 def create_generation_params(args) -> Dict[str, Any]:
     """Create generation parameters dictionary from arguments."""
+    if args.no_think:
+        no_think = True
+    else:
+        no_think = False
+        
     return {
         'max_tokens': args.max_tokens,
         'temperature': args.temp,
         'top_k': args.top_k,
         'top_p': args.top_p,
-        'rep_pen': args.rep_pen
+        'rep_pen': args.rep_pen,
+        'no_think': no_think
     }
 
 

@@ -48,7 +48,7 @@ def run_benchmarks(
             print(f"Generating continuation...")
 
         round_start_time = datetime.now()
-
+        
         # Generate continuation
         try:
             continuation = client.generate_continuation(
@@ -56,7 +56,8 @@ def run_benchmarks(
                 max_tokens=generation_params['max_tokens'],
                 temperature=generation_params['temperature'],
                 top_k=generation_params['top_k'],
-                top_p=generation_params['top_p']
+                top_p=generation_params['top_p'],
+                no_think=generation_params['no_think']
             )
         except Exception as e:
             print(f"WARNING: Generation failed for round {round_num}: {e}")
