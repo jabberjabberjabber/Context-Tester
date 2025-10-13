@@ -398,6 +398,77 @@ def load_csv_for_plotting(csv_file: Path) -> tuple[pd.DataFrame, str]:
     return df_clean, dataset_name
 
 
+def load_all_results_from_folder(parent_folder: Path) -> List[Dict[str, Any]]:
+    """Load all valid result directories from a parent folder.
+
+    Args:
+        parent_folder: Path to folder containing result directories
+
+    Returns:
+        List of dicts, each containing:
+            - 'name': Display name for the dataset
+            - 'dataframe': pandas DataFrame with averaged results
+            - 'metadata': Full metadata dict
+            - 'error': Error message if loading failed (optional)
+    """
+    datasets = []
+
+    for subdir in parent_folder.iterdir():
+        if not subdir.is_dir():
+            continue
+
+        # Check if it's a valid results directory
+        if not (subdir / "metadata.json").exists():
+            continue
+
+        try:
+            # Load metadata
+            metadata = load_experiment_metadata(subdir)
+            experiment_meta = metadata.get('experiment_metadata', {})
+
+            model_name = experiment_meta.get('model_name', 'unknown')
+            text_name = experiment_meta.get('source_text_name', 'unknown')
+            model_id = experiment_meta.get('model_id', '')
+
+            # Clean up model name
+            if '/' in str(model_name):
+                model_name = str(model_name).split('/')[-1]
+
+            # Build display name
+            parts = [str(model_name), str(text_name)]
+            if model_id and str(model_id) != '':
+                parts.append(str(model_id))
+            name = ' - '.join(parts)
+
+            # Load data
+            individual_rounds, averaged_results, _ = load_individual_rounds_for_plotting(subdir)
+
+            # Create dataframe
+            df = pd.DataFrame(averaged_results)
+            df = df[df['context_length'].notna()].copy()
+
+            if df.empty:
+                datasets.append({
+                    'name': name,
+                    'error': 'No valid data in results'
+                })
+                continue
+
+            datasets.append({
+                'name': name,
+                'dataframe': df,
+                'metadata': metadata
+            })
+
+        except Exception as e:
+            datasets.append({
+                'name': subdir.name,
+                'error': str(e)
+            })
+
+    return datasets
+
+
 def generate_plot_filename(dataset_names: List[str]) -> str:
     """Generate output PNG filename based on dataset names.
 
