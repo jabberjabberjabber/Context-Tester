@@ -1,27 +1,42 @@
 # Context Window Testing
 
-This project utilizes a novel method for evaluating an LLM's ability to utilize different sized context windows. It is especially concerned with style, creativity and degradation of long form outputs as the amount of tokens fill larger context windows.
+This tool utilizes a novel method for evaluating an LLM's writing ability. A large creative text is used to fill the context window and the model is instructed to continue the text as the original writer. 
 
-Instead of checking for recall or correctness, the test fills the context with a text and asks the model to continue the text as if it were the original writer. It then evaluates the model's output using basic metrics for readability, sentence length, and vocabulary diversity.
+A set of standard metrics for evaluating writing is produced from the generated output along the original text at the point of divergence for the same tokens as the model generated.
 
-The purpose is not to provide a benchmark that is definitive, but to provide data points for comparison so that one can see how changes to the model weights and processing affects its creative output across different corpus sizes.
+A visualization tool is provided which allows you to compare across generations, models, context windows, test parameters, etc. 
 
-The script finds a natural break point in the text and then cuts out a set of tokens a bit larger than the largest test size. It will then expand the context window by adding new tokens going backwards from the continuation point. In this way the context window can expand with minimal effect on the model's creative choices. Any changes in style or creativity are then assumed to be from the larger number of tokens in the window, and not from stylistic choices due to the text changing. All of these operations are determined by using the actual tokens after converting the text using the model's own tokenizer, which allows for granular slicing of the context windows.
+The key to being able to have valid comparisons is consistency. For every set of tests the tool will always give the model the same continuation point in the text. Large windows are filled with tokens starting backwards for the continuation points. 
+
+**Example:** for a set of tests composed of 4096, 8192, and 16384 tokens from a text, the process would be:
+
+- chunk 16384 continuous tokens from somewhere in the text
+- the 4096 test will use tokens 12289 through 16384
+- the 8192 test will use tokens 8192 through 16384
+- the 16384 test will give the whole 16384 chunk to the model
+
+Since we are using the model's tokenizer to create these slices, then tests with the same maximum context on the same model will have a consistent continuation point and can be directly compared.
+
+This of course is not what is actually happening since we are trying to end at natural breaking points and we have to leave enough room for the generation and the instructions, but that is the basic idea.
+
+This process allows the evaluator to test for individual factors which have so far been 'untestable' by any metric. We can test outputs from 16bit, 8bit, and 4bit KV cache for instance, and directly see what impact this has generation. 
 
 ## Overview
 
 This repository contains two primary analysis tools:
 
 1. **Context Tester** (`main.py`) - Measures how LLM output quality degrades as context length increases
-2. **Performance Comparison Tool** (`generate_plot.py`) - Creates comparison plots from test results
+2. **Performance Comparison Tool** (`plot_gui.py`) - Creates comparison plots from test results
 
 ## Installation
 
 ### Prerequisites
 
+This tool was specifically designed to use KoboldCpp's and nVidia's OpenAI compatibile API endpoints. It should work with any OpenAI compatible provider with a chat completions and embedding endpoint, but that hasn't been tested.
+
 - Python 3.13 or higher
 - A large text to use as the basis for continuation (txt, pdf, or html)
-- An OpenAI-compatible API endpoint (KoboldCpp, NVIDIA NIM, OpenAI, etc.)
+- An OpenAI-compatible API with a chat completion and embedding endpoint
 
 ### Setup
 
@@ -66,15 +81,16 @@ python main.py novel.txt --api-url https://api.endpoint.com --api-password your-
 Start KoboldCpp with your model:
 
 ```bash
-koboldcpp --model modelname.gguf --contextsize 32768
+koboldcpp --model modelname.gguf --contextsize 32768 --embeddingsmodel embedding-model.gguf 
 ```
 
-Run the test:
+Since KoboldCpp only runs one language model on a given instance, you do not need to specify to the tool the models you want to use.
 
 ```bash
-uv run main.py middlemarch.txt --api-url http://localhost:5001
+uv run main.py middlemarch.txt --api-url http://localhost:5001 
 ```
 
+OpenAI compatible endpoints like the one in KoboldCpp have hidden default settings for samplers such as top_p (Kobold sets it to 0.92 if you don't specify it), so you may want to set that along with temperature 
 ### Using NVIDIA NIM (Remote)
 
 ```bash
@@ -180,7 +196,7 @@ uv run main.py --reanalyze results/model-text-20250108-123456
 
 ### Comparison Plots
 
-Compare multiple test runs:
+Static comparison tool:
 
 ```bash
 # Compare using CSV files
@@ -196,6 +212,12 @@ uv run generate_plot.py results/model-test/ --plot-rounds
 uv run generate_plot.py results/model-test/ --enhanced
 ```
 
+Interactive comparison tool:
+
+```bash
+run_gui.bat
+```
+
 **Plot Types:**
 
 - **Standard Comparison**: Shows the four core metrics across context sizes for multiple models
@@ -205,78 +227,6 @@ uv run generate_plot.py results/model-test/ --enhanced
   - Consistency/variance indicator (coefficient of variation)
   - Effect size visualization (rank-biserial correlation)
   - Statistical significance map with multiple comparison correction
-
-## Understanding the Results
-
-### The Four Metrics
-
-The tool evaluates four key metrics:
-
-1. **Vocabulary Diversity** (top-left) - Higher = less diverse wording (inverted y-axis)
-2. **Cloze Score** (top-right) - Higher = more basic/predictable text
-3. **Adjacent Sentence Similarity** (bottom-left) - Higher = more similar sentences
-4. **Bigram Repetition Rate** (bottom-right) - Higher = more repetitive patterns
-
-### Reading the Graphs
-
-Ideally, all four graphs should show relatively flat lines across context sizes. Any significant movement up or down indicates inconsistency in the model's output as context grows.
-
-**Good Result (Flat Lines):**
-
-![Broken Tutu](Broken-Tutu-24B.Q6_K-middlemarch.txt-3r1d.png)
-
-This shows consistent performance across all context sizes.
-
-**Degradation Example:**
-
-![Cohere Aya](Cohere_aya-23-8B-Q6_K-middlemarch.txt-3r1d.png)
-
-The vocabulary diversity drops at 16K (becomes less diverse), while the Cloze score steadily rises (becomes more predictable). This indicates context-length-related degradation.
-
-### Important Limitations
-
-Since this test doesn't evaluate coherence, style accuracy, or instruction following, it should not be used as evidence of overall model capability. A good result could be achieved by the model generating well-structured, diverse nonsense.
-
-The test is meant as a starting point and as a simple and easily readable indicator of output consistency across context sizes.
-
-### Enhanced Statistical Analysis
-
-The `--enhanced` mode provides rigorous statistical analysis for determining if degradation is real or just random variation:
-
-**Panel 1: Composite Degradation Score**
-- Combines all four metrics into a single 0-100 score (higher = more degradation)
-- Shows 95% bootstrap confidence intervals
-- Color-coded zones: green (no degradation), yellow (mild), red (severe)
-- Significant degradation points marked with red X (sized by effect size)
-- Displays Spearman correlation trend analysis
-
-**Panel 2: Consistency Indicator**
-- Coefficient of variation (CV) shows how consistent performance is at each context size
-- Higher CV = less reliable/more variable performance
-- Bars exceeding CV=0.15 threshold shown in red
-
-**Panel 3: Effect Size Visualization**
-- Shows magnitude of difference vs baseline using rank-biserial correlation
-- Color-coded: green (small <0.3), yellow (medium 0.3-0.5), red (large >0.5)
-- Effect size tells you if statistical significance is practically meaningful
-
-**Panel 4: Statistical Significance Map**
-- Mann-Whitney U test comparing each context size to baseline
-- Includes Holm-Bonferroni multiple comparison correction
-- Green circle = no change, yellow triangle = marginal (p≤0.05), red X = significant (p≤0.01)
-- Summary shows: degradation detected (yes/no), max effect size, number of significant points
-
-**When to use Enhanced mode:**
-- You need statistical confidence that degradation is real, not random
-- You're comparing models and need effect sizes, not just visual trends
-- You have sufficient rounds (10+ recommended) for statistical power
-- You want to publish/present results with proper statistical backing
-
-## Text Choice
-
-Different reference texts can produce different results. Here is a comparison of the same model tested with Crime and Punishment vs Middlemarch:
-
-![Text choice](zai-org_GLM-4-9B-0414-Q6_K-crime_english_with-zai-org_GLM-4-9B-0414-Q6_K-3rounds_1divs-middlemarch.png)
 
 ## Detailed Usage
 

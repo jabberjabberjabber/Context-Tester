@@ -156,7 +156,11 @@ def load_individual_rounds_for_plotting(results_dir: Path) -> tuple[List[dict], 
 
 
 def average_results(round_results: List[Dict]) -> Dict[str, Any]:
-    """Average results across multiple rounds."""
+    """Average results across multiple rounds.
+
+    Automatically detects numerical fields and averages them.
+    Excludes specific fields that should not be averaged.
+    """
     from src.readability_tests import reading_level_from_cloze
 
     if not round_results:
@@ -169,18 +173,23 @@ def average_results(round_results: List[Dict]) -> Dict[str, Any]:
         result['vocab_diversity_std'] = 0.0
         return result
 
-    numerical_fields = [
-        'pct_unfamiliar_words', 'avg_sentence_length', 'cloze_score',
-        'word_count', 'sentence_count', 'sentence_length_variance',
-        'vocabulary_diversity', 'continuation_length',
-        'bigram_repetition_rate', 'trigram_repetition_rate', 'unique_word_ratio_100',
-        'word_entropy', 'char_entropy',
-        'comma_density', 'semicolon_density', 'question_density', 'exclamation_density',
-        'avg_syllables_per_word', 'long_word_ratio', 'function_word_ratio',
-        'sentence_length_skewness', 'sentence_length_kurtosis', 'avg_word_length'
-    ]
+    # Fields that should NOT be averaged (either non-numerical or identifiers)
+    exclude_fields = {
+        'round_number',           # Round identifier
+        'timestamp',              # Timestamp string
+        'continuation_text',      # Generated text
+        'reading_level',          # String derived from cloze_score
+        'reanalyzed_timestamp',   # Timestamp string
+        'context_length'          # Context identifier (same across all rounds at this level)
+    }
 
     averaged = {}
+
+    # Auto-detect numerical fields from first result
+    numerical_fields = []
+    for key, value in round_results[0].items():
+        if key not in exclude_fields and isinstance(value, (int, float)) and value is not None:
+            numerical_fields.append(key)
 
     # Copy non-numerical fields from first result
     for key, value in round_results[0].items():

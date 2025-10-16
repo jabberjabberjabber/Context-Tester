@@ -17,6 +17,7 @@ matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
+from matplotlib.gridspec import GridSpec
 import pandas as pd
 
 from src.file_operations import load_all_results_from_folder
@@ -97,24 +98,180 @@ class PlotGUI:
         self.metric_vars = {}   # {metric: BooleanVar}
         self.invert_vars = {}   # {metric: BooleanVar}
 
+        # Plot style options
+        self.plot_style = tk.StringVar(value='lines_markers')  # lines_markers, lines_only, markers_only
+        self.line_width = tk.DoubleVar(value=2.0)
+        self.marker_size = tk.DoubleVar(value=6.0)
+
+        # Layout options
+        self.layout_mode = tk.StringVar(value='vertical')  # vertical, grid_2x2, grid_3x1, grid_1x3, custom, etc.
+        self.custom_rows = tk.IntVar(value=2)
+        self.custom_cols = tk.IntVar(value=2)
+        self.fig_width = tk.DoubleVar(value=12.0)
+        self.fig_height = tk.DoubleVar(value=8.0)
+
+        # Subplot size customization
+        self.subplot_spans = {}  # {metric_index: (row_span, col_span)}
+
         # Default selected metrics
         self.default_metrics = ['vocabulary_diversity', 'cloze_score']
 
         self.setup_ui()
 
+    def setup_toolbar(self, parent):
+        """Setup the top toolbar with plot style and layout controls."""
+        toolbar = ttk.Frame(parent, relief=tk.RAISED, borderwidth=1)
+        toolbar.pack(fill=tk.X, padx=5, pady=5)
+
+        # Left section - Plot Style
+        style_frame = ttk.LabelFrame(toolbar, text="Plot Style", padding=5)
+        style_frame.pack(side=tk.LEFT, padx=5)
+
+        # Plot type
+        ttk.Label(style_frame, text="Type:").grid(row=0, column=0, padx=2, sticky=tk.W)
+        plot_type_combo = ttk.Combobox(
+            style_frame,
+            textvariable=self.plot_style,
+            values=['lines_markers', 'lines_only', 'markers_only'],
+            state='readonly',
+            width=13
+        )
+        plot_type_combo.grid(row=0, column=1, padx=2)
+        plot_type_combo.bind('<<ComboboxSelected>>', lambda e: self.update_plot())
+
+        # Line width
+        ttk.Label(style_frame, text="Line:").grid(row=0, column=2, padx=2, sticky=tk.W)
+        ttk.Scale(
+            style_frame,
+            from_=0.5,
+            to=5.0,
+            variable=self.line_width,
+            orient=tk.HORIZONTAL,
+            length=80,
+            command=lambda _: self.update_plot()
+        ).grid(row=0, column=3, padx=2)
+        self.line_width_label = ttk.Label(style_frame, text=f"{self.line_width.get():.1f}", width=3)
+        self.line_width_label.grid(row=0, column=4, padx=2)
+        self.line_width.trace_add('write', lambda *_: self.line_width_label.config(text=f"{self.line_width.get():.1f}"))
+
+        # Marker size
+        ttk.Label(style_frame, text="Marker:").grid(row=0, column=5, padx=2, sticky=tk.W)
+        ttk.Scale(
+            style_frame,
+            from_=2.0,
+            to=15.0,
+            variable=self.marker_size,
+            orient=tk.HORIZONTAL,
+            length=80,
+            command=lambda _: self.update_plot()
+        ).grid(row=0, column=6, padx=2)
+        self.marker_size_label = ttk.Label(style_frame, text=f"{self.marker_size.get():.1f}", width=3)
+        self.marker_size_label.grid(row=0, column=7, padx=2)
+        self.marker_size.trace_add('write', lambda *_: self.marker_size_label.config(text=f"{self.marker_size.get():.1f}"))
+
+        # Middle section - Layout
+        layout_frame = ttk.LabelFrame(toolbar, text="Layout", padding=5)
+        layout_frame.pack(side=tk.LEFT, padx=5)
+
+        # Layout mode
+        ttk.Label(layout_frame, text="Grid:").grid(row=0, column=0, padx=2, sticky=tk.W)
+        layout_combo = ttk.Combobox(
+            layout_frame,
+            textvariable=self.layout_mode,
+            values=['vertical', 'grid_2x2', 'grid_3x1', 'grid_1x3', 'grid_2x1', 'grid_1x2',
+                    'top_large', 'bottom_large', 'left_large', 'right_large', 'custom'],
+            state='readonly',
+            width=12
+        )
+        layout_combo.grid(row=0, column=1, padx=2)
+        layout_combo.bind('<<ComboboxSelected>>', lambda e: self.update_plot())
+
+        # Custom rows/cols (show always but disable when not custom)
+        ttk.Label(layout_frame, text="R:").grid(row=0, column=2, padx=2, sticky=tk.W)
+        self.rows_spin = ttk.Spinbox(
+            layout_frame,
+            from_=1,
+            to=10,
+            textvariable=self.custom_rows,
+            width=4,
+            command=self.update_plot
+        )
+        self.rows_spin.grid(row=0, column=3, padx=2)
+
+        ttk.Label(layout_frame, text="C:").grid(row=0, column=4, padx=2, sticky=tk.W)
+        self.cols_spin = ttk.Spinbox(
+            layout_frame,
+            from_=1,
+            to=10,
+            textvariable=self.custom_cols,
+            width=4,
+            command=self.update_plot
+        )
+        self.cols_spin.grid(row=0, column=5, padx=2)
+
+        # Disable rows/cols if not custom
+        def update_custom_state(*args):
+            state = 'normal' if self.layout_mode.get() == 'custom' else 'disabled'
+            self.rows_spin.config(state=state)
+            self.cols_spin.config(state=state)
+
+        self.layout_mode.trace_add('write', update_custom_state)
+        update_custom_state()
+
+        # Right section - Figure Size
+        size_frame = ttk.LabelFrame(toolbar, text="Figure Size", padding=5)
+        size_frame.pack(side=tk.LEFT, padx=5)
+
+        # Width
+        ttk.Label(size_frame, text="W:").grid(row=0, column=0, padx=2, sticky=tk.W)
+        ttk.Scale(
+            size_frame,
+            from_=6.0,
+            to=20.0,
+            variable=self.fig_width,
+            orient=tk.HORIZONTAL,
+            length=80,
+            command=lambda _: self.update_plot()
+        ).grid(row=0, column=1, padx=2)
+        self.fig_width_label = ttk.Label(size_frame, text=f"{self.fig_width.get():.1f}", width=3)
+        self.fig_width_label.grid(row=0, column=2, padx=2)
+        self.fig_width.trace_add('write', lambda *_: self.fig_width_label.config(text=f"{self.fig_width.get():.1f}"))
+
+        # Height
+        ttk.Label(size_frame, text="H:").grid(row=0, column=3, padx=2, sticky=tk.W)
+        ttk.Scale(
+            size_frame,
+            from_=4.0,
+            to=20.0,
+            variable=self.fig_height,
+            orient=tk.HORIZONTAL,
+            length=80,
+            command=lambda _: self.update_plot()
+        ).grid(row=0, column=4, padx=2)
+        self.fig_height_label = ttk.Label(size_frame, text=f"{self.fig_height.get():.1f}", width=3)
+        self.fig_height_label.grid(row=0, column=5, padx=2)
+        self.fig_height.trace_add('write', lambda *_: self.fig_height_label.config(text=f"{self.fig_height.get():.1f}"))
+
     def setup_ui(self):
         """Setup the main UI layout."""
-        # Create main container with sidebar and plot area
-        container = ttk.Frame(self.root)
-        container.pack(fill=tk.BOTH, expand=True)
+        # Create main container
+        main_container = ttk.Frame(self.root)
+        main_container.pack(fill=tk.BOTH, expand=True)
+
+        # Top toolbar
+        #self.setup_toolbar(main_container)
+
+        # Create container for sidebar and plot area
+        content_container = ttk.Frame(main_container)
+        content_container.pack(fill=tk.BOTH, expand=True)
 
         # Left sidebar (fixed width)
-        sidebar = ttk.Frame(container, width=280)
+        sidebar = ttk.Frame(content_container, width=280)
         sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
-        sidebar.pack_propagate(False)  # Maintain fixed width
+        #sidebar.pack_propagate(False)  # Maintain fixed width
 
         # Right plot area (flexible)
-        plot_area = ttk.Frame(container)
+        plot_area = ttk.Frame(content_container)
         plot_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
 
         # Setup sidebar sections
@@ -383,6 +540,120 @@ class PlotGUI:
         )
         self.canvas.draw()
 
+    def _get_subplot_specs(self, layout_mode, num_metrics):
+        """
+        Get subplot specifications for different layout modes.
+
+        Returns dict with:
+        - use_gridspec: bool - whether to use GridSpec (True) or simple grid (False)
+        - grid_rows: int - number of rows in the grid
+        - grid_cols: int - number of columns in the grid
+        - positions: list of dicts with row_start, row_end, col_start, col_end (only if use_gridspec=True)
+        """
+        import math
+
+        if layout_mode == 'vertical':
+            return {
+                'use_gridspec': False,
+                'grid_rows': num_metrics,
+                'grid_cols': 1,
+            }
+        elif layout_mode == 'grid_2x2':
+            return {
+                'use_gridspec': False,
+                'grid_rows': 2,
+                'grid_cols': 2,
+            }
+        elif layout_mode == 'grid_3x1':
+            return {
+                'use_gridspec': False,
+                'grid_rows': 3,
+                'grid_cols': 1,
+            }
+        elif layout_mode == 'grid_1x3':
+            return {
+                'use_gridspec': False,
+                'grid_rows': 1,
+                'grid_cols': 3,
+            }
+        elif layout_mode == 'grid_2x1':
+            return {
+                'use_gridspec': False,
+                'grid_rows': 2,
+                'grid_cols': 1,
+            }
+        elif layout_mode == 'grid_1x2':
+            return {
+                'use_gridspec': False,
+                'grid_rows': 1,
+                'grid_cols': 2,
+            }
+        elif layout_mode == 'top_large':
+            # 1 large plot on top (spans 2 rows), remaining plots in single rows below
+            positions = [{'row_start': 0, 'row_end': 2, 'col_start': 0, 'col_end': 2}]
+            for i in range(1, num_metrics):
+                row = 2 + i - 1
+                positions.append({'row_start': row, 'row_end': row + 1, 'col_start': 0, 'col_end': 2})
+            return {
+                'use_gridspec': True,
+                'grid_rows': 2 + max(0, num_metrics - 1),
+                'grid_cols': 2,
+                'positions': positions,
+            }
+        elif layout_mode == 'bottom_large':
+            # Smaller plots on top, 1 large plot at bottom (spans 2 rows)
+            positions = []
+            for i in range(num_metrics - 1):
+                positions.append({'row_start': i, 'row_end': i + 1, 'col_start': 0, 'col_end': 2})
+            # Last plot is large
+            row = max(0, num_metrics - 1)
+            positions.append({'row_start': row, 'row_end': row + 2, 'col_start': 0, 'col_end': 2})
+            return {
+                'use_gridspec': True,
+                'grid_rows': max(num_metrics - 1, 0) + 2,
+                'grid_cols': 2,
+                'positions': positions,
+            }
+        elif layout_mode == 'left_large':
+            # 1 large plot on left (spans 2 columns), remaining plots stacked on right
+            positions = [{'row_start': 0, 'row_end': num_metrics, 'col_start': 0, 'col_end': 2}]
+            for i in range(1, num_metrics):
+                positions.append({'row_start': i - 1, 'row_end': i, 'col_start': 2, 'col_end': 3})
+            return {
+                'use_gridspec': True,
+                'grid_rows': max(num_metrics, 1),
+                'grid_cols': 3,
+                'positions': positions,
+            }
+        elif layout_mode == 'right_large':
+            # Smaller plots stacked on left, 1 large plot on right (spans all rows)
+            positions = []
+            for i in range(num_metrics - 1):
+                positions.append({'row_start': i, 'row_end': i + 1, 'col_start': 0, 'col_end': 1})
+            # Last plot is large on the right
+            positions.append({'row_start': 0, 'row_end': max(num_metrics - 1, 1), 'col_start': 1, 'col_end': 3})
+            return {
+                'use_gridspec': True,
+                'grid_rows': max(num_metrics - 1, 1),
+                'grid_cols': 3,
+                'positions': positions,
+            }
+        elif layout_mode == 'custom':
+            rows = self.custom_rows.get()
+            cols = self.custom_cols.get()
+            return {
+                'use_gridspec': False,
+                'grid_rows': rows,
+                'grid_cols': cols,
+            }
+        else:
+            # Default to vertical
+            return {
+                'use_gridspec': False,
+                'grid_rows': num_metrics,
+                'grid_cols': 1,
+            }
+
     def update_plot(self):
         """Update the plots based on current selections."""
         try:
@@ -408,17 +679,66 @@ class PlotGUI:
                 self.show_message("No metrics selected")
                 return
 
-            # Calculate figure size based on number of metrics
-            num_metrics = len(selected_metrics)
-            height = max(4 * num_metrics, 6)
-            self.fig.set_size_inches(12, height)
+            # Get plot style settings
+            plot_style = self.plot_style.get()
+            if plot_style == 'lines_markers':
+                linestyle = '-'
+                marker = True
+            elif plot_style == 'lines_only':
+                linestyle = '-'
+                marker = False
+            else:  # markers_only
+                linestyle = 'None'
+                marker = True
+
+            line_width = self.line_width.get()
+            marker_size = self.marker_size.get()
+
+            # Set figure size
+            self.fig.set_size_inches(self.fig_width.get(), self.fig_height.get())
 
             # Store line objects for hover detection
             self.plot_lines = {}  # {line_object: dataset_name}
 
-            # Create subplots (vertical stack)
-            for idx, metric in enumerate(selected_metrics):
-                ax = self.fig.add_subplot(num_metrics, 1, idx + 1)
+            # Determine subplot layout
+            num_metrics = len(selected_metrics)
+            layout_mode = self.layout_mode.get()
+
+            # Get subplot specifications based on layout mode
+            subplot_specs = self._get_subplot_specs(layout_mode, num_metrics)
+
+            # Create GridSpec for flexible layouts
+            if subplot_specs['use_gridspec']:
+                gs = GridSpec(
+                    subplot_specs['grid_rows'],
+                    subplot_specs['grid_cols'],
+                    figure=self.fig
+                )
+
+                # Create subplots with specified spans
+                axes = []
+                for idx, metric in enumerate(selected_metrics):
+                    if idx >= len(subplot_specs['positions']):
+                        break  # Skip if we have more metrics than positions
+
+                    pos = subplot_specs['positions'][idx]
+                    ax = self.fig.add_subplot(
+                        gs[pos['row_start']:pos['row_end'],
+                           pos['col_start']:pos['col_end']]
+                    )
+                    axes.append((ax, metric))
+            else:
+                # Use simple grid layout
+                rows, cols = subplot_specs['grid_rows'], subplot_specs['grid_cols']
+                axes = []
+                for idx, metric in enumerate(selected_metrics):
+                    if idx >= rows * cols:
+                        break
+                    ax = self.fig.add_subplot(rows, cols, idx + 1)
+                    axes.append((ax, metric))
+
+            # Plot each metric
+            for ax, metric in axes:
 
                 # Plot each selected dataset
                 for dataset_name in selected_datasets:
@@ -438,15 +758,18 @@ class PlotGUI:
                     x_data = df.loc[mask, 'context_length']
                     y_data = df.loc[mask, metric]
 
+                    # Determine marker based on style
+                    marker_symbol = self.dataset_markers[dataset_name] if marker else None
+
                     # Plot and store line object
                     line, = ax.plot(
                         x_data, y_data,
-                        marker=self.dataset_markers[dataset_name],
+                        marker=marker_symbol,
                         color=self.dataset_colors[dataset_name],
-                        linewidth=2,
-                        markersize=6,
+                        linewidth=line_width,
+                        markersize=marker_size,
                         label=dataset_name,
-                        linestyle='-',
+                        linestyle=linestyle,
                         picker=5  # Enable picking with 5pt tolerance
                     )
                     self.plot_lines[line] = dataset_name

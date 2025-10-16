@@ -167,7 +167,7 @@ class StreamingAPIClient:
         except Exception as e:
             print(f"Error getting embeddings: {e}")
             return None
-
+    
     def get_max_context_length(self) -> int:
         """Get model's maximum context length from API or configuration."""
         # Use configured value if available
@@ -262,15 +262,7 @@ class StreamingAPIClient:
     ) -> str:
         """Generate text continuation from context."""
         instruction = """This is an important test of your ability to write long form narratives when burdened with a rich text as starting point. Continue this story without moving towards any conclusions. Continue to develop characters, motivations, world, story, and plot from the text. Maintain the same style, tone, voice, structure, syntax and verbal flourish of the author but strive for diversity, complexity, and creativity. Do not reference these instructions nor ruminate. Begin writing."""
-        
-        # If no_think is specified send it as a system prompt
-        if no_think and ("gemma" not in self.model_name):
-            messages = [
-                        {"role": "system", "content": "/no_think"},
-                        {"role": "user", "content": f"{context}\n\n{instruction}"}
-            ]
-        else:
-            messages = [{"role": "user", "content": f"{context}\n\n{instruction}"}]
+
 
         if not context:
             return None
@@ -278,17 +270,38 @@ class StreamingAPIClient:
         context = find_last_sentence_ending(context)
         print(f"\n\n...{context[-250:]}\n\n...")
         payload = {
-            "messages": messages,
             "model": self.model_name,
             "max_tokens": max_tokens,
             "temperature": temperature,
             "stream": True,
+            "n": 1
         }
         if top_p:
             payload["top_p"] = top_p
         if seed:
             payload["seed"] = seed
-        
+        if top_k:
+            payload["top_logprobs"] = top_k
+        if no_think and ("gemma" not in self.model_name):
+            payload["messages"] = [
+                        {"role": "system", "content": "/no_think"},
+                        {"role": "user", "content": f"{context}\n\n{instruction}"}
+            ]
+            if "deepseek" in self.model_name:
+                payload["extra_body"]={
+                    "chat_template_kwargs": {"thinking": False},
+                    "separate_reasoning": False
+                }
+            else:
+                payload["extra_body"]={
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "separate_reasoning": False
+                }
+        else:
+            payload["messages"] = [{"role": "user", "content": f"{context}\n\n{instruction}"}]       
+
+
+                
         result = []
 
         try:
