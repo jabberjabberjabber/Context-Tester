@@ -1,0 +1,321 @@
+================================================================================
+LLM GENERATION OUTPUTS
+================================================================================
+Model: koboldcpp/Muse-12B.i1-Q6_K
+Source Text: everville.txt
+Model ID: ROPE-32768
+Generated: 2025-10-16T10:46:25.761740
+================================================================================
+
+
+================================================================================
+GROUND TRUTH (Source Text Continuation)
+================================================================================
+This is the actual continuation from the source text at the continuation point.
+Use this as a baseline for comparison with generated outputs.
+
+Ground Truth Metrics:
+  Cloze Score: 25.85
+  Vocabulary Diversity: 0.5619
+  Reading Level: 11-12
+  Avg Sentence Length: 13.03
+------------------------------------------------------------
+els and bladder voiding. Wearing a look close to amusement, the prophet stepped over the bloody litter that lay between them and with one backhanded swipe struck the seared face with the staff, the blow so hard her head was separated from her neck.
+
+Harry let out an involuntary cry, more of rage than of horror. The killer, who was already striding past the beheaded woman towards the crack, stopped in mid-step, and stared through the blood-flecked air.
+
+Harry froze. The prophet stared on, a look of puzzlement on his face.
+
+He doesn’t see me, Harry thought.
+
+That was perhaps overly optimistic. The man continued to look, as though he glimpsed some trace of a presence in the deepening darkness, but could not quite decide whether his eyes were deceiving him. He wasn’t about to take any chances. Even as he stared on in puzzlement he raised his staff.
+
+Harry didn’t wait for the fire to come. He made a dash for the stairs, hoping to God that Ted had escaped ahead of him. The killing fire sighed past him, close enough for Harry to feel its sickly heat, then burst against the opposite wall, its energies tracing the cracks as it dispersed. Harry looked back towards the prophet, who had already forgotten about the phantom and had turned towards the dark crack that let on to Quiddity.
+
+Harry’s gaze went to the sliver. In the diminishing light of the chamber the shore and sea were more visible than they had been, and for a moment it was all he could do not to turn back; to race the prophet to the threshold and be out under that steepled sky.
+
+Then, from the murk off to his left, a pained and weary voice.
+
+“I’m sorry, Harry . . . please . . . I’m sorry—”
+
+With a sickening lurch in his stomach Harry turned and sought out the source of the voice. Ted lay seven or eight yards from the bottom of the stairs, his arms open wide, his chest the same. Such a wound, wet and deep, it was a wonder he had life enough to breathe, much less to speak. Harry went down at his side.
+
+
+
+“Grab my hand, will you?” Ted said.
+
+“I’ve got it,” Harry said.
+
+“I can’t feel anything.”
+
+“Maybe that’s for the best,” Harry said. “I’m going to have to pick you up.”
+
+“He came out of nowhere—”
+================================================================================
+
+CONTEXT LENGTH: 4,096 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:31:01.678456):
+------------------------------
+The prophet turned his head, and Harry saw his face clearly now. It was a face of terrible beauty, the features almost too perfect, as though carved from marble and then animated. His eyes were black, and his mouth was set in a line of such sternness it might have been chiseled there. He was scanning the chamber, looking for more prey.
+
+Harry ducked behind a fallen body, his heart hammering. He had no weapon that could harm this man, no magic that could touch him. The prodigile was useless against such power. The gun in his holster would be a joke.
+
+He heard the prophet speak, though the words were not for him.
+
+"Where is he?" the prophet said. "Where is the one who came to see the sea?"
+
+Harry held his breath. The prophet was looking in his direction, though not at him. He was looking past him, to the sliver of darkness that had opened to the shore.
+
+"Come out," the prophet said, and the words were not spoken aloud, but in Harry's mind, as though they had been pressed into his skull. "Come out and face me."
+
+Harry did not move. He could not. The sliver was calling him, and the prophet knew it.
+
+"Come out," the prophet said again, and this time Harry felt the words like hooks in his brain. "Or I will burn them all."
+
+Harry rose to his feet, his hands raised. The prophet's eyes found him instantly.
+
+"Ah," the prophet said, and there was no triumph in his tone, only a kind of weary recognition. "You."
+
+Harry stepped forward, his body shaking. "I didn't come to fight you," he said.
+
+The prophet's face did not change. "Then why did you come?"
+
+"I wanted to see the sea," Harry said, and the admission was so simple, so naked, that it shamed him.
+
+The prophet's eyes narrowed. "You wanted to see the sea," he repeated, as if tasting the words. "And you thought you could simply walk through my door and take what you wanted?"
+
+"I didn't know it was your door," Harry said.
+
+The prophet's face twitched, almost a smile. "No. You didn't. You're not the first to make that mistake." He lowered the staff slightly. "You're not even the first to come here for the sea."
+
+Harry glanced at the bodies around
+------------------------------
+
+
+CONTEXT LENGTH: 6,144 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:31:38.252602):
+------------------------------
+The prophet turned his head, and Harry saw his face clearly now. It was not a face he knew, but it was a face he recognized. The features were those of a man who had once been human, but had since been remade by the same forces that had shaped the creatures around him. His eyes were too large, his mouth too small, his skin stretched taut over his skull. He was smiling.
+
+Harry had no time to think before the prophet turned his staff in Harry's direction. The weapon hummed, and Harry felt the air thicken around him, as though the very atmosphere was being compressed. He ducked instinctively, and the blast that followed passed over his head, scorching his hair. He hit the ground, rolling, and came up behind a fallen body, which he used as cover. The prophet was advancing now, his staff raised, his smile still in place.
+
+"Who are you?" he called out, his words carrying an echo that made Harry's teeth ache.
+
+Harry didn't answer. He reached for his gun, but the prophet was already moving, his staff arcing through the air. Harry threw himself sideways as the blast struck the corpse he'd been hiding behind, turning it to ash in an instant. The prophet's eyes found him, and he fired again, this time at Harry's feet. The blast struck the floor, and the stone beneath Harry's hands cracked, splitting like a struck bell. He scrambled back, but the prophet was already upon him, his staff descending.
+
+Harry caught the blow on his forearm, the impact sending a shock up to his shoulder. He cried out, but the pain was nothing compared to the searing heat that followed. His flesh blistered instantly, the sleeve of his shirt burning away. He rolled again, and came up with his gun drawn.
+
+The prophet didn't flinch. He simply raised his staff, and Harry fired. The bullet struck the prophet's chest, but instead of stopping him, it seemed to excite him. He laughed, a sound like breaking glass, and the wound in his chest began to pulse, the bullet inside him glowing white-hot.
+
+"You dare?" he said, and the staff came down again.
+
+Harry dodged, but not far enough. The blast caught his side, and he felt his ribs crack. He fell, gasping, the pain so intense it made his vision blur. He tried to raise the gun again, but his arm wouldn't obey.
+------------------------------
+
+
+CONTEXT LENGTH: 8,192 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:32:21.165258):
+------------------------------
+The prophet turned his head, and Harry saw his face clearly now. It was not a face of malice, but of terrible purpose. His eyes were not human, but they were not inhuman either. They were the eyes of a man who had seen too much and was now seeing more.
+
+Harry had no time to think. He drew his gun and fired, the shot cracking through the chamber. The prophet did not flinch. The bullet struck his chest, and he staggered back a pace, but did not fall. Instead, he raised his staff and pointed it at Harry.
+
+Harry had time to think, I am dead, before the energy came at him. It was not fire, but something worse: a pulse of pure absence. It struck him in the chest and he felt his body unravel, as though the very atoms of his being were being pulled apart. He had a moment to think of Norma, and then the world was gone.
+
+He was in the sea.
+
+The waves were not water, but something else, something that had the texture of memory. They broke against his legs, and he felt them as a thousand hands, pulling him down, pulling him under. He fought to stay upright, but the tide was too strong. He was dragged under, and the cold was not cold, but a kind of emptiness that made his teeth chatter. He opened his mouth to scream and the sea poured in, not water but absence, and he was drowning in it, drowning in the memory of drowning.
+
+Then, as suddenly as he had been taken, he was back in the chamber, on his knees, retching. The prophet stood before him, his staff lowered.
+
+Harry looked up at him, his body shaking, his vision swimming.
+
+"You are not of the neirica," the prophet said, his words like the sound of a tide retreating.
+
+Harry coughed, spitting the taste of the sea from his mouth. "No," he said, his voice raw.
+
+The prophet knelt, bringing his face level with Harry's. His breath smelled of salt and something older, something deeper. "Then why do you come here?"
+
+Harry's hand found the gun, still in his grip. He raised it, but the prophet caught his wrist before he could fire again.
+
+"You don't understand what you've done," Harry said, his voice hoarse.
+
+The prophet's grip was like iron. "I understand perfectly," he replied. "You've opened
+------------------------------
+
+
+CONTEXT LENGTH: 12,288 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:33:19.495328):
+------------------------------
+The prophet turned his head, and Harry saw his face clearly. It was a face of such terrible beauty it made his breath catch. The eyes were black, the mouth a perfect bow, the skin flawless. He was smiling, but not with pleasure. It was a smile of pure, cold purpose.
+
+Harry had seen that smile before, in the mirror, in the faces of the dying, in the faces of the damned. It was the smile of the Iad.
+
+The prophet had seen him too. His gaze locked with Harry’s, and the smile deepened. He raised his staff, and Harry had no time to think, only to act. He ducked as the fire came, and it passed over his head, scorching the air where he had stood a second before. He rolled, and came up behind a fallen body, using it as cover. The prophet was advancing now, his staff still raised, his eyes fixed on Harry.
+
+Harry reached for his gun, but the prophet was already upon him, the staff descending. He rolled again, and the weapon struck the corpse he was sheltering behind, turning it to ash in an instant.
+
+Harry was on his feet now, backing away, his gun in his hand. The prophet did not even glance at the weapon. He simply raised his staff again, and Harry fired. The bullet struck the prophet in the chest, and he staggered, but did not fall. Instead, he laughed, and the sound was like the breaking of ice.
+
+Harry fired again, and again, and again, each shot finding its mark. The prophet did not bleed. He simply advanced, the wounds closing as he came, the bullets falling from his body like spent cartridges.
+
+Harry had no time to reload. He turned and ran, the prophet at his heels, the staff spitting fire. It caught him in the back of the thigh, and the pain was exquisite. He stumbled, but did not fall, and reached the edge of the chamber, where Ted was waiting, his face a mask of horror.
+
+“What the hell is that thing?” Ted yelled.
+
+Harry didn’t answer. He simply grabbed Ted by the arm and hauled him up the stairs, the prophet’s laughter following them.
+
+They were halfway up when the staff struck the wall beside them, and the brickwork dissolved into dust. Harry felt the heat of the blast at his back, and the next shot of fire caught his shoulder, turning the flesh to ash as it
+------------------------------
+
+
+CONTEXT LENGTH: 16,384 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:34:36.641133):
+------------------------------
+The prophet turned his head, and Harry saw his face clearly. It was not a face he knew, but it was a face he recognized. It was the face of a man who had once been human, and had since been remade. The eyes were too large, the mouth too small, the skin too pale. He had the look of a man who had been hollowed out and refilled with something else.
+
+Harry had no time to dwell on this. The prophet had seen him.
+
+The staff was raised again, and Harry ducked, the blast passing over his head, scorching the air where he had stood a second before. He rolled, and came up behind a fallen body, which he used as cover. The prophet was advancing now, his staff still raised, his face showing no particular malice, only a kind of weary purpose.
+
+Harry drew his gun, but the prophet was already moving, and the blast that came from the staff was not a bolt this time, but a wave of force that lifted Harry off his feet and slammed him against the wall. His head cracked against brick, and for a moment the world was a kaleidoscope of pain. He slid down the wall, his gun falling from his hand.
+
+The prophet was upon him before he could recover it, the staff now a weapon of a different kind. He pressed it against Harry’s chest, and Harry felt the cold of it seep into his flesh, into his bones.
+
+“You are not of the neirica,” the prophet said, his words like the sound of a tide retreating.
+
+Harry tried to speak, but the cold had reached his throat.
+
+“You are not of the neirica,” the prophet repeated, and now the cold was in his skull, in his teeth, in his eyes.
+
+Harry fought to keep his gaze on the prophet, but the cold was making his vision swim. He saw the staff, its surface like a length of bone, and the prophet’s face above it, his mouth moving, forming words Harry could no longer hear.
+
+Then the cold was in his thoughts, and he was no longer in the chamber at all, but in a place of shifting light, where the prophet stood before him, his staff now a staff of light, and his face a mask of light.
+
+“You are not of the neirica,” the prophet said again, and now Harry could hear him, though the words were not spoken aloud. They were
+------------------------------
+
+
+CONTEXT LENGTH: 24,576 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:36:40.770497):
+------------------------------
+Harry had no time to watch her death. The prophet had already turned his attention to the next victim, and the next, and the next. He was moving through the chamber with the ease of a man in a dream, his staff never still, his face never changing. The only sign of exertion was the sweat on his brow, which glistened in the failing light.
+
+Harry backed away, but the prophet had already seen him. His gaze fixed on Harry, and the staff turned in his direction.
+
+Harry had no time to draw his gun. The fire was already coming, and he had to throw himself to the ground to avoid it. It passed over his head, and struck the wall behind him, burning a hole in the brickwork.
+
+“You shouldn’t be here,” the prophet said, his words carrying across the chamber.
+
+Harry got to his feet, his heart hammering. He had no doubt that the next burst would not miss. He had to speak, to distract the prophet, to make himself human to him.
+
+“You don’t know me,” he said.
+
+The prophet paused, his staff half-raised. His face was lined, his beard streaked with gray, but his eyes were young. They were the eyes of a man who had never known doubt.
+
+“You don’t know me,” Harry repeated, backing away as he spoke. The prophet lowered the staff a fraction.
+
+“No, I don’t,” he said. His tone was almost gentle. He looked at Harry with curiosity. “But you know me, don’t you? You know what I am, what I do. You know the Iad, don’t you? You know the name of the Uroboros. You know the name of the Beast. You know the name of the Serpent. You know the name of the—”
+
+“Yes, I know the name,” Harry said, his voice steady despite the terror in his gut.
+
+The prophet smiled. It was a terrible smile, because it was not cruel. It was beatific.
+
+“Then you know why I do this,” he said. He gestured to the dying around him. “They were weak. They wanted to go back too soon. They wanted to go back before the blessing came. I can’t allow that. They would have been lost in the sea, and the Iad would have found them, and eaten them. I can’t allow that. I have to keep them here, until the blessing comes
+------------------------------
+
+
+CONTEXT LENGTH: 32,768 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:39:46.562428):
+------------------------------
+Harry had no time to retreat. The prophet had already turned his attention to him, and the staff was raised again. He ducked, and the blast of fire went over his head, striking the wall behind him. The heat was intense, but not lethal. He felt his hair singe, and the skin of his back blister, but he was still standing.
+
+The prophet advanced, his face now visible in the dying light of the Borealis. It was a face Harry knew, though he had never seen it before. It was the face of a man who had once been human, but had been so long in the service of the Iad that the flesh had been corrupted, the features stretched and twisted. The eyes were the worst of it: they were not eyes at all, but a single, burning orb, set in the center of the forehead.
+
+“You,” the prophet said, his voice a rumble. He spoke with a sound like the sea, and the sea was in his face, in the way the flesh of his brow and cheekbones had been eroded by the tides. His beard was not beard at all, but a mass of seaweed, his hair a tangle of kelp.
+
+Harry backed away, but the prophet was already upon him, the staff coming down in a second arc. This time Harry caught hold of it, and the contact was like a live wire. His fingers were burned instantly, but he held on, and the prophet, plainly surprised by his defiance, let out a roar of rage.
+
+Harry had no time to think. He simply pulled the staff towards him, and as he did so the prophet stumbled forward, off balance. Harry let go of the weapon, and drove his fist into the creature’s face. The impact was sickening, his knuckles sinking into the flesh of the cheek, which was as soft as rotted fruit. The prophet reeled back, but did not fall. Instead, he raised his hands, and Harry felt the air around him thicken, as though the very atmosphere had become a weapon. It pressed against his chest, his throat, his face, and he was forced to his knees.
+
+The prophet came closer, and Harry saw the wound he had inflicted on the creature’s face had already healed. The flesh had knitted itself back together, and the seaweed beard had grown over the damage, as though the wound had never been.
+
+“You have no
+------------------------------
+
+
+CONTEXT LENGTH: 49,152 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:45:31.907304):
+------------------------------
+ “Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us? Why do you do this to us
+------------------------------
+
+
+CONTEXT LENGTH: 65,536 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T09:54:54.519473):
+------------------------------
+The staff struck again, and the creature fell, her body unraveling as she went. The fire that had been in her mouth and throat now poured from her in a flood, and the light that had been in her eyes went out like a snuffed candle.
+
+Harry turned from the sight, and ran for the exit. The chamber was no longer a place of mystery, but a place of slaughter. The veils were falling, the bodies of the dead or dying caught in them, their wounds still bleeding, their mouths still open in their last cries.
+
+He reached the stairs, and started up them, his breath coming in ragged gasps. Behind him the chamber was still shaking, but the sounds of agony were dying. He heard the last of the victims fall, and the last of the veils collapse, and the last of the light go out.
+
+Ted was waiting at the top of the stairs, his face pale in the gloom.
+
+“What the hell happened down there, Harry? What the hell did you do to them? ”
+
+Harry didn’t stop to answer. He just kept climbing, his hands shaking, his breath coming in sobs. He reached the street, and the night air was a relief after the chamber’s stench.
+
+Ted caught hold of him, and pulled him round to face him. His face was inches from Harry’s, his breath hot and fast.
+
+“You killed them all, didn’t you? You killed them all? ”
+
+Harry nodded, his throat too tight to speak.
+
+Ted let go of him, and stepped back. His face was a mask of disgust. He looked down at the chamber, where the last of the light was dying, and the last of the bodies falling.
+
+“You didn’t have to do that, Harry. You didn’t have to do that. They were just—just—” He stopped, his voice breaking. Then, with a sudden, terrible clarity: “They were just exiles, Harry. They were just exiles, and you killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You killed them all. You
+------------------------------
+
+
+CONTEXT LENGTH: 98,304 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T10:14:09.478899):
+------------------------------
+The creature was not done. It struck again, and again, and again, and the victim was not felled. The fire climbed up her skull, and she was not dead. She was not even unconscious. She was not even in agony. She was in a state of pure, unrelenting pain, and the staff was still in her wounder’s hand, still striking her.
+
+Harry saw the creature raise its staff a fourth time, and the victim (who had been a woman, he now saw, her face a ruin of blood and teeth) was not dead. She was not even screaming. She was in a state of pure, unrelenting agony, and the staff was still in her wounder’s hand, still striking her.
+
+Harry saw the creature raise its staff a fifth time, and the victim (who had been a woman, he now saw, her face a ruin of blood and teeth) was not dead. She was not even screaming. She was in a state of pure, unreling agony, and the staff was still in her wounder.
+
+Harry saw the creature raise its staff a sixth time, and the victim (who had been a woman, he now saw, her face a ruin of blood and teeth) was not dead. She was not even screaming. She was in a state of pure, unreling agony, and the staff was still in her wounder.
+
+Harry saw the creature raise its staff a seventh time, and the victim (who had been a woman, he now saw, her face a ruin of blood and teeth) was not dead. She was not even screaming. She was in a state of pure, unreling agony, and the staff was still in her wounder.
+
+Harry saw the creature raise its staff an eighth time, and the victim (who had been a woman, he now saw, her face a ruin of blood and teeth) was not dead. She was not even screaming. She was in a state of pure, unreling agony, and the staff was still in her wounder.
+
+Harry saw the creature raise its staff a ninth time, and the victim (who had been a woman, he now saw, her face a ruin of blood and teeth) was not dead. She was not even screaming. She was in a state of pure, unreling agony, and the staff was still in her wounder.
+
+Harry saw the creature raise its staff a tenth time, and the victim (who
+------------------------------
+
+
+CONTEXT LENGTH: 131,072 tokens
+------------------------------------------------------------
+Round 1 (2025-10-16T10:46:24.815451):
+------------------------------
+I
+
+The chamber was a blur of light, but the light was not the only thing that had changed. The air had grown colder, and the smell of the incense had thickened. The candles were guttering, and the walls had become a blur of shadows, but the shadows were not the only thing that had altered. The floor was a blur of darkness, but the darkness was not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a blur of incense, but the incense was not the only thing that had altered. The walls were a blur of shadows, but the shadows were not the only thing that had altered. The air was a
+------------------------------
+
+

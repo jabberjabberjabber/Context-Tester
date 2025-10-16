@@ -29,12 +29,104 @@ Since we are using the model's tokenizer to create these slices, then tests with
 
 This process allows the evaluator to test for individual factors which have so far been 'untestable' by any metric. For instance we can test outputs with different RoPE values, with different quantizations, with 16bit, 8bit, and 4bit KV cache, and directly see what impact this has generation. 
 
+Example of setting RoPE to optimize at different lengths:
+
+![Screenshot](./media/rope_test.png)
+
 ## Overview
 
 This repository contains two primary analysis tools:
 
 1. **Context Tester** (`benchmark_gui.py`) - Measures how LLM output quality degrades as context length increases
 2. **Performance Comparison Tool** (`plot_gui.py`) - Creates comparison plots from test results
+
+## Tested Metrics
+
+### Readability Metrics
+
+**cloze_score**  
+Text predictability.
+
+### Vocabulary Metrics
+
+**pct_unfamiliar_words**  
+Proportion of words outside the most common 3,000 English words.
+
+**vocabulary_diversity**  
+Type-token ratio measuring lexical variety.
+
+**unique_word_ratio_100**  
+Ratio of unique words in 100-word chunks.
+
+**long_word_ratio**  
+Proportion of words with 7+ letters.
+
+**avg_word_length**  
+Mean character count per word.
+
+**avg_syllables_per_word**  
+Mean syllable count per word.
+
+**function_word_ratio**  
+Proportion of grammatical words (articles, prepositions, conjunctions) versus content words.
+
+### Sentence Structure
+
+**avg_sentence_length**  
+Mean word count per sentence.
+
+**sentence_length_variance**  
+Variance in sentence lengths.
+
+**sentence_length_skewness**  
+Distribution asymmetry.
+
+**sentence_length_kurtosis**  
+Extreme outliers in sentence length. 
+
+### Repetition Metrics
+
+**bigram_repetition_rate**  
+Frequency of repeated two-word phrases.
+
+**trigram_repetition_rate**  
+Frequency of repeated three-word phrases.
+
+### Entropy Metrics
+
+**word_entropy**  
+Word-level unpredictability using information theory (bits).
+
+**char_entropy**  
+Character-level unpredictability.
+
+### Punctuation Density
+
+**comma_density**  
+Commas per sentence.
+
+**semicolon_density**  
+Semicolons per sentence.
+
+**question_density**  
+Questions per sentence.
+
+**exclamation_density**  
+Exclamations per sentence.
+
+### Semantic Coherence
+
+**adjacent_coherence**  
+Semantic similarity between consecutive sentences.
+
+**global_coherence**  
+Overall topical consistency across the entire text.
+
+**local_coherence_3sent**  
+Semantic similarity within three-sentence windows.
+
+**coherence_variance**  
+Variability in local coherence scores.
 
 ## Installation
 
