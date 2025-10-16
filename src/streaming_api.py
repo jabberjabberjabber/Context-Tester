@@ -64,6 +64,35 @@ class StreamingAPIClient:
             hf_token=hf_token
         )
 
+    def is_kobold_api(self) -> bool:
+        """Check if the API is a KoboldCpp instance.
+
+        Returns:
+            True if this is a KoboldCpp API, False otherwise
+        """
+        try:
+            # Get base URL without /v1/chat/completions
+            base_url = self.api_url.replace('/v1/chat/completions', '')
+            version_url = f"{base_url.rstrip('/')}/api/extra/version"
+
+            # Try to get version info (KoboldCpp-specific endpoint)
+            response = requests.get(version_url, timeout=5)
+
+            if response.status_code == 200:
+                try:
+                    version_data = response.json()
+                    # Check if response has KoboldCpp-specific fields
+                    if 'result' in version_data or 'version' in version_data:
+                        return True
+                except (json.JSONDecodeError, ValueError):
+                    pass
+
+            return False
+
+        except (requests.exceptions.RequestException, requests.exceptions.Timeout):
+            # If request fails, assume not KoboldCpp
+            return False
+
     def count_tokens(self, text: str) -> int:
         """Count tokens in text."""
         return self.tokenizer.count_tokens(text)
@@ -224,7 +253,7 @@ class StreamingAPIClient:
                     json=payload,
                     headers=self.headers,
                     stream=stream,
-                    timeout=999
+                    timeout=9999
                 )
 
                 if response.status_code == 200:
@@ -281,7 +310,7 @@ class StreamingAPIClient:
         if seed:
             payload["seed"] = seed
         if top_k:
-            payload["top_logprobs"] = top_k
+            payload["top_k"] = top_k
         if no_think and ("gemma" not in self.model_name):
             payload["messages"] = [
                         {"role": "system", "content": "/no_think"},
@@ -341,3 +370,193 @@ class StreamingAPIClient:
         except Exception as e:
             print(f"\nError in generation: {str(e)}")
             return ""
+
+    def generate_continuation_litellm(
+        self,
+        context: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.1,
+        top_k: int = None,
+        top_p: float = None,
+        no_think: bool = False,
+        seed = None
+    ) -> str:
+        """Generate text continuation using LiteLLM for universal compatibility.
+
+        LiteLLM provides a unified interface to various LLM providers and handles
+        provider-specific quirks automatically.
+
+        Args:
+            context: Input text to continue
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            top_k: Top-k sampling parameter
+            top_p: Top-p (nucleus) sampling parameter
+            no_think: Disable thinking for reasoning models
+            seed: Random seed for reproducibility
+
+        Returns:
+            Generated continuation text
+        """
+        try:
+            from litellm import completion
+            import os
+        except ImportError:
+            print("Warning: litellm not installed. Install with: pip install litellm")
+            return ""
+
+        instruction = """This is an important test of your ability to write long form narratives when burdened with a rich text as starting point. Continue this story without moving towards any conclusions. Continue to develop characters, motivations, world, story, and plot from the text. Maintain the same style, tone, voice, structure, syntax and verbal flourish of the author but strive for diversity, complexity, and creativity. Do not reference these instructions nor ruminate. Begin writing."""
+
+        if not context:
+            return None
+
+        context = find_last_sentence_ending(context)
+        print(f"\n\n...{context[-250:]}\n\n...")
+
+        # Build messages
+        if no_think and self.model_name and ("gemma" not in self.model_name):
+            messages = [
+                {"role": "system", "content": "/no_think"},
+                {"role": "user", "content": f"{context}\n\n{instruction}"}
+            ]
+        else:
+            messages = [{"role": "user", "content": f"{context}\n\n{instruction}"}]
+
+        # Prepare LiteLLM parameters
+        litellm_params = {
+            "model": f"openai/{self.model_name}" if self.model_name else "openai/gpt-3.5-turbo",
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+            "stream": True,
+        }
+
+        # Add optional parameters
+        if top_p is not None:
+            litellm_params["top_p"] = top_p
+        if seed is not None:
+            litellm_params["seed"] = seed
+        if top_k is not None:
+            litellm_params["top_k"] = top_k
+
+        # Configure custom API endpoint
+        base_url = self.api_url.replace('/v1/chat/completions', '')
+        litellm_params["api_base"] = base_url
+
+        # Set API key if provided
+        if self.headers.get("Authorization"):
+            # Extract bearer token
+            auth_header = self.headers["Authorization"]
+            if auth_header.startswith("Bearer "):
+                api_key = auth_header[7:]  # Remove "Bearer " prefix
+                litellm_params["api_key"] = api_key
+                # Also set as environment variable for LiteLLM
+                os.environ["OPENAI_API_KEY"] = api_key
+
+        # Add extra_body for reasoning models
+        if no_think and self.model_name:
+            if "deepseek" in self.model_name:
+                litellm_params["extra_body"] = {
+                    "chat_template_kwargs": {"thinking": False},
+                    "separate_reasoning": False
+                }
+            elif "deepseek" not in self.model_name and "gemma" not in self.model_name:
+                litellm_params["extra_body"] = {
+                    "chat_template_kwargs": {"enable_thinking": False},
+                    "separate_reasoning": False
+                }
+
+        result = []
+
+        try:
+            print(f"Using LiteLLM for generation...")
+
+            response = completion(**litellm_params)
+
+            # Stream the response
+            for chunk in response:
+                if hasattr(chunk, 'choices') and len(chunk.choices) > 0:
+                    delta = chunk.choices[0].delta
+                    if hasattr(delta, 'content') and delta.content is not None:
+                        content = delta.content
+                        result.append(content)
+                        print(content, end='', flush=True)
+
+            print()
+            return ''.join(result)
+
+        except Exception as e:
+            print(f"\nError in LiteLLM generation: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return ""
+
+    def generate_continuation_with_fallback(
+        self,
+        context: str,
+        max_tokens: int = 1024,
+        temperature: float = 0.1,
+        top_k: int = None,
+        top_p: float = None,
+        no_think: bool = False,
+        seed = None,
+        use_litellm: bool = False
+    ) -> str:
+        """Generate text continuation with automatic fallback to LiteLLM.
+
+        Tries the direct API method first. If that fails, automatically falls back
+        to using LiteLLM for broader compatibility.
+
+        Args:
+            context: Input text to continue
+            max_tokens: Maximum tokens to generate
+            temperature: Sampling temperature
+            top_k: Top-k sampling parameter
+            top_p: Top-p (nucleus) sampling parameter
+            no_think: Disable thinking for reasoning models
+            seed: Random seed for reproducibility
+            use_litellm: Force use of LiteLLM instead of trying direct API first
+
+        Returns:
+            Generated continuation text
+        """
+        # If explicitly requested to use LiteLLM, skip the direct API
+        if use_litellm:
+            print("Using LiteLLM (explicitly requested)...")
+            return self.generate_continuation_litellm(
+                context=context,
+                max_tokens=max_tokens,
+                temperature=temperature,
+                top_k=top_k,
+                top_p=top_p,
+                no_think=no_think,
+                seed=seed
+            )
+
+        # Try direct API first
+        print("Attempting direct API call...")
+        result = self.generate_continuation(
+            context=context,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            no_think=no_think,
+            seed=seed
+        )
+
+        # If direct API succeeded, return result
+        if result and len(result.strip()) > 0:
+            return result
+
+        # Direct API failed, try LiteLLM fallback
+        print("\nDirect API failed or returned empty result. Falling back to LiteLLM...")
+        return self.generate_continuation_litellm(
+            context=context,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            top_k=top_k,
+            top_p=top_p,
+            no_think=no_think,
+            seed=seed
+        )

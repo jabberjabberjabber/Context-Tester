@@ -18,7 +18,7 @@ from typing import List, Optional
 from extractous import Extractor
 
 # Local modules
-from config import parse_arguments, create_generation_params, create_experiment_metadata
+from src.config import parse_arguments, create_generation_params, create_experiment_metadata
 from src.file_operations import (
     create_output_directory,
     save_experiment_metadata,
@@ -30,9 +30,9 @@ from src.file_operations import (
     save_analysis_results
 )
 from src.streaming_api import StreamingAPIClient
-from benchmark_runner import run_context_test_with_retries
+from src.benchmark_runner import run_context_test_with_retries
 from src.readability_tests import initialize_word_list
-from generate_plot import make_png
+from src.generate_plot import make_png
 
 
 # ================================
@@ -327,7 +327,7 @@ def print_results_table(results: List[dict]):
 
     if has_std:
         print(f"{'Context':>8} {'Cloze':>8} {'±Std':>6} {'Level':>8} {'Unfamiliar':>10} {'AvgSent':>8} {'Variance':>8} {'VocabDiv':>8} {'±Std':>6}")
-        print("-" * 80)
+        print("-" * 15)
 
         for result in results:
             print(f"{result['context_length']:>8,} "
@@ -341,7 +341,7 @@ def print_results_table(results: List[dict]):
                   f"{result.get('vocab_diversity_std', 0):>6.3f}")
     else:
         print(f"{'Context':>8} {'Cloze':>8} {'Level':>8} {'Unfamiliar':>10} {'AvgSent':>8} {'Variance':>8} {'VocabDiv':>8}")
-        print("-" * 68)
+        print("-" * 15)
 
         for result in results:
             print(f"{result['context_length']:>8,} "
@@ -364,9 +364,9 @@ def run_analysis(results_dir: Path, model_id: Optional[str] = None) -> dict:
     Returns:
         Analysis results dictionary
     """
-    print(f"\n{'='*60}")
+    print(f"\n{'='*15}")
     print("RUNNING ANALYSIS")
-    print(f"{'='*60}")
+    print(f"{'='*15}")
 
     metadata = load_experiment_metadata(results_dir)
     context_results = load_all_context_results(results_dir)
@@ -420,9 +420,9 @@ def reanalyze(input_dir: Path, client: StreamingAPIClient, model_id: Optional[st
     """
     from src.readability_tests import analyze_text_comprehensive
 
-    print(f"\n{'='*60}")
+    print(f"\n{'='*15}")
     print("RE-ANALYZING EXISTING RESULTS")
-    print(f"{'='*60}")
+    print(f"{'='*15}")
     print(f"Input directory: {input_dir}")
 
     metadata = load_experiment_metadata(input_dir)
@@ -511,9 +511,9 @@ def reanalyze(input_dir: Path, client: StreamingAPIClient, model_id: Optional[st
 
     save_experiment_metadata(output_dir, metadata)
 
-    print(f"\n{'='*60}")
+    print(f"\n{'='*15}")
     print("REANALYSIS COMPLETE")
-    print(f"{'='*60}")
+    print(f"{'='*15}")
     print(f"Successfully reanalyzed {successful_contexts}/{len(context_files)} context lengths")
 
     if successful_contexts >= 2:
@@ -528,9 +528,9 @@ def reanalyze(input_dir: Path, client: StreamingAPIClient, model_id: Optional[st
 
 def run_data_collection(args):
     """Run data collection mode."""
-    print("=" * 60)
+    print("=" * 15)
     print("MODEL READABILITY DEGRADATION TEST")
-    print("=" * 60)
+    print("=" * 15)
 
     # Get HF token from environment
     hf_token = os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')
@@ -581,14 +581,14 @@ def run_data_collection(args):
     print(f"\n{'='*60}")
     print("RUNNING DEGRADATION TESTS")
     print(f"All continuations start from same story position!")
-    print(f"{'='*60}")
+    print(f"{'='*15}")
 
     generation_params = create_generation_params(args)
     successful_contexts = 0
 
     for i, context_length in enumerate(context_lengths, 1):
         print(f"\n[TEST {i}/{len(context_lengths)}] Context Length: {context_length:,} tokens")
-        print("-" * 50)
+        print("-" * 15)
 
         # Build context window and extract ground truth
         try:
@@ -680,34 +680,42 @@ def run_data_collection(args):
         run_analysis(output_dir, args.model_id)
 
 
+def run_benchmark(args):
+    """Run benchmark with given arguments (for GUI use).
+
+    Args:
+        args: Parsed arguments from parse_args()
+    """
+    if args.reanalyze:
+        results_dir = Path(args.input_file)
+        hf_token = os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')
+        client = StreamingAPIClient(
+            args.api_url,
+            args.api_password,
+            tokenizer_model=args.tokenizer_model,
+            model_name=args.model_name,
+            max_context=args.max_context,
+            embedding_model=args.embedding_model,
+            hf_token=hf_token
+        )
+        initialize_word_list(args.word_list)
+        reanalyze(results_dir, client, args.model_id)
+        return
+
+    if args.analyze:
+        results_dir = Path(args.input_file)
+        run_analysis(results_dir, args.model_id)
+        return
+
+    # Data collection mode
+    run_data_collection(args)
+
+
 def main():
     """Main entry point."""
     try:
         args = parse_arguments()
-
-        if args.reanalyze:
-            results_dir = Path(args.input_file)
-            hf_token = os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')
-            client = StreamingAPIClient(
-                args.api_url,
-                args.api_password,
-                tokenizer_model=args.tokenizer_model,
-                model_name=args.model_name,
-                max_context=args.max_context,
-                embedding_model=args.embedding_model,
-                hf_token=hf_token
-            )
-            initialize_word_list(args.word_list)
-            reanalyze(results_dir, client, args.model_id)
-            return 0
-
-        if args.analyze:
-            results_dir = Path(args.input_file)
-            run_analysis(results_dir, args.model_id)
-            return 0
-
-        # Data collection mode
-        run_data_collection(args)
+        run_benchmark(args)
         return 0
 
     except KeyboardInterrupt:

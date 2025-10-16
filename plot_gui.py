@@ -30,13 +30,14 @@ class PlotGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Context Tester - Interactive Plots")
-        self.root.geometry("1600x1000")
+        self.root.geometry("1800x1000")  # Wider to accommodate three-column layout
 
         # Data storage
         self.datasets = {}  # {display_name: dataframe}
         self.dataset_colors = {}
         self.dataset_markers = {}
         self.dataset_metadata = {}  # {display_name: metadata_dict}
+        self.dataset_rounds = {}  # {display_name: list of individual round dicts}
 
         # Available metrics
         self.available_metrics = [
@@ -98,159 +99,23 @@ class PlotGUI:
         self.metric_vars = {}   # {metric: BooleanVar}
         self.invert_vars = {}   # {metric: BooleanVar}
 
-        # Plot style options
-        self.plot_style = tk.StringVar(value='lines_markers')  # lines_markers, lines_only, markers_only
-        self.line_width = tk.DoubleVar(value=2.0)
-        self.marker_size = tk.DoubleVar(value=6.0)
+        # Sidebar visibility
+        self.left_sidebar_visible = True
+        self.right_sidebar_visible = True
 
         # Layout options
-        self.layout_mode = tk.StringVar(value='vertical')  # vertical, grid_2x2, grid_3x1, grid_1x3, custom, etc.
-        self.custom_rows = tk.IntVar(value=2)
-        self.custom_cols = tk.IntVar(value=2)
-        self.fig_width = tk.DoubleVar(value=12.0)
-        self.fig_height = tk.DoubleVar(value=8.0)
+        self.layout_mode = tk.StringVar(value='vertical')  # vertical, 1x1, 1x2, 2x1, 2x2, 3x1, 1x3, etc.
 
-        # Subplot size customization
-        self.subplot_spans = {}  # {metric_index: (row_span, col_span)}
+        # Plot style options
+        self.show_smoothed = tk.BooleanVar(value=False)
+        self.show_intervals = tk.BooleanVar(value=False)
+        self.show_candlestick = tk.BooleanVar(value=False)
+        self.show_trendline = tk.BooleanVar(value=False)
 
         # Default selected metrics
         self.default_metrics = ['vocabulary_diversity', 'cloze_score']
 
         self.setup_ui()
-
-    def setup_toolbar(self, parent):
-        """Setup the top toolbar with plot style and layout controls."""
-        toolbar = ttk.Frame(parent, relief=tk.RAISED, borderwidth=1)
-        toolbar.pack(fill=tk.X, padx=5, pady=5)
-
-        # Left section - Plot Style
-        style_frame = ttk.LabelFrame(toolbar, text="Plot Style", padding=5)
-        style_frame.pack(side=tk.LEFT, padx=5)
-
-        # Plot type
-        ttk.Label(style_frame, text="Type:").grid(row=0, column=0, padx=2, sticky=tk.W)
-        plot_type_combo = ttk.Combobox(
-            style_frame,
-            textvariable=self.plot_style,
-            values=['lines_markers', 'lines_only', 'markers_only'],
-            state='readonly',
-            width=13
-        )
-        plot_type_combo.grid(row=0, column=1, padx=2)
-        plot_type_combo.bind('<<ComboboxSelected>>', lambda e: self.update_plot())
-
-        # Line width
-        ttk.Label(style_frame, text="Line:").grid(row=0, column=2, padx=2, sticky=tk.W)
-        ttk.Scale(
-            style_frame,
-            from_=0.5,
-            to=5.0,
-            variable=self.line_width,
-            orient=tk.HORIZONTAL,
-            length=80,
-            command=lambda _: self.update_plot()
-        ).grid(row=0, column=3, padx=2)
-        self.line_width_label = ttk.Label(style_frame, text=f"{self.line_width.get():.1f}", width=3)
-        self.line_width_label.grid(row=0, column=4, padx=2)
-        self.line_width.trace_add('write', lambda *_: self.line_width_label.config(text=f"{self.line_width.get():.1f}"))
-
-        # Marker size
-        ttk.Label(style_frame, text="Marker:").grid(row=0, column=5, padx=2, sticky=tk.W)
-        ttk.Scale(
-            style_frame,
-            from_=2.0,
-            to=15.0,
-            variable=self.marker_size,
-            orient=tk.HORIZONTAL,
-            length=80,
-            command=lambda _: self.update_plot()
-        ).grid(row=0, column=6, padx=2)
-        self.marker_size_label = ttk.Label(style_frame, text=f"{self.marker_size.get():.1f}", width=3)
-        self.marker_size_label.grid(row=0, column=7, padx=2)
-        self.marker_size.trace_add('write', lambda *_: self.marker_size_label.config(text=f"{self.marker_size.get():.1f}"))
-
-        # Middle section - Layout
-        layout_frame = ttk.LabelFrame(toolbar, text="Layout", padding=5)
-        layout_frame.pack(side=tk.LEFT, padx=5)
-
-        # Layout mode
-        ttk.Label(layout_frame, text="Grid:").grid(row=0, column=0, padx=2, sticky=tk.W)
-        layout_combo = ttk.Combobox(
-            layout_frame,
-            textvariable=self.layout_mode,
-            values=['vertical', 'grid_2x2', 'grid_3x1', 'grid_1x3', 'grid_2x1', 'grid_1x2',
-                    'top_large', 'bottom_large', 'left_large', 'right_large', 'custom'],
-            state='readonly',
-            width=12
-        )
-        layout_combo.grid(row=0, column=1, padx=2)
-        layout_combo.bind('<<ComboboxSelected>>', lambda e: self.update_plot())
-
-        # Custom rows/cols (show always but disable when not custom)
-        ttk.Label(layout_frame, text="R:").grid(row=0, column=2, padx=2, sticky=tk.W)
-        self.rows_spin = ttk.Spinbox(
-            layout_frame,
-            from_=1,
-            to=10,
-            textvariable=self.custom_rows,
-            width=4,
-            command=self.update_plot
-        )
-        self.rows_spin.grid(row=0, column=3, padx=2)
-
-        ttk.Label(layout_frame, text="C:").grid(row=0, column=4, padx=2, sticky=tk.W)
-        self.cols_spin = ttk.Spinbox(
-            layout_frame,
-            from_=1,
-            to=10,
-            textvariable=self.custom_cols,
-            width=4,
-            command=self.update_plot
-        )
-        self.cols_spin.grid(row=0, column=5, padx=2)
-
-        # Disable rows/cols if not custom
-        def update_custom_state(*args):
-            state = 'normal' if self.layout_mode.get() == 'custom' else 'disabled'
-            self.rows_spin.config(state=state)
-            self.cols_spin.config(state=state)
-
-        self.layout_mode.trace_add('write', update_custom_state)
-        update_custom_state()
-
-        # Right section - Figure Size
-        size_frame = ttk.LabelFrame(toolbar, text="Figure Size", padding=5)
-        size_frame.pack(side=tk.LEFT, padx=5)
-
-        # Width
-        ttk.Label(size_frame, text="W:").grid(row=0, column=0, padx=2, sticky=tk.W)
-        ttk.Scale(
-            size_frame,
-            from_=6.0,
-            to=20.0,
-            variable=self.fig_width,
-            orient=tk.HORIZONTAL,
-            length=80,
-            command=lambda _: self.update_plot()
-        ).grid(row=0, column=1, padx=2)
-        self.fig_width_label = ttk.Label(size_frame, text=f"{self.fig_width.get():.1f}", width=3)
-        self.fig_width_label.grid(row=0, column=2, padx=2)
-        self.fig_width.trace_add('write', lambda *_: self.fig_width_label.config(text=f"{self.fig_width.get():.1f}"))
-
-        # Height
-        ttk.Label(size_frame, text="H:").grid(row=0, column=3, padx=2, sticky=tk.W)
-        ttk.Scale(
-            size_frame,
-            from_=4.0,
-            to=20.0,
-            variable=self.fig_height,
-            orient=tk.HORIZONTAL,
-            length=80,
-            command=lambda _: self.update_plot()
-        ).grid(row=0, column=4, padx=2)
-        self.fig_height_label = ttk.Label(size_frame, text=f"{self.fig_height.get():.1f}", width=3)
-        self.fig_height_label.grid(row=0, column=5, padx=2)
-        self.fig_height.trace_add('write', lambda *_: self.fig_height_label.config(text=f"{self.fig_height.get():.1f}"))
 
     def setup_ui(self):
         """Setup the main UI layout."""
@@ -258,27 +123,52 @@ class PlotGUI:
         main_container = ttk.Frame(self.root)
         main_container.pack(fill=tk.BOTH, expand=True)
 
-        # Top toolbar
-        #self.setup_toolbar(main_container)
-
-        # Create container for sidebar and plot area
+        # Create container for left sidebar, plot area, and right sidebar
         content_container = ttk.Frame(main_container)
         content_container.pack(fill=tk.BOTH, expand=True)
 
-        # Left sidebar (fixed width)
-        sidebar = ttk.Frame(content_container, width=280)
-        sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=5, pady=5)
-        #sidebar.pack_propagate(False)  # Maintain fixed width
+        # Left sidebar with toggle button
+        self.left_sidebar = ttk.Frame(content_container)
+        self.left_sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(5, 2), pady=5)
 
-        # Right plot area (flexible)
+        # Left toggle button (collapses left sidebar)
+        left_toggle_frame = ttk.Frame(content_container)
+        left_toggle_frame.pack(side=tk.LEFT, fill=tk.Y, pady=5)
+        self.left_toggle_btn = ttk.Button(
+            left_toggle_frame,
+            text="◀",
+            width=2,
+            command=self.toggle_left_sidebar
+        )
+        self.left_toggle_btn.pack(fill=tk.Y)
+
+        # Center plot area (flexible - gets all extra space)
         plot_area = ttk.Frame(content_container)
-        plot_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=5, pady=5)
+        plot_area.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2, pady=5)
 
-        # Setup sidebar sections
-        self.setup_load_section(sidebar)
-        self.setup_dataset_section(sidebar)
-        self.setup_metric_section(sidebar)
-        self.setup_export_section(sidebar)
+        # Right toggle button (collapses right sidebar)
+        right_toggle_frame = ttk.Frame(content_container)
+        right_toggle_frame.pack(side=tk.LEFT, fill=tk.Y, pady=5)
+        self.right_toggle_btn = ttk.Button(
+            right_toggle_frame,
+            text="▶",
+            width=2,
+            command=self.toggle_right_sidebar
+        )
+        self.right_toggle_btn.pack(fill=tk.Y)
+
+        # Right sidebar for layout controls
+        self.right_sidebar = ttk.Frame(content_container)
+        self.right_sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(2, 5), pady=5)
+
+        # Setup left sidebar sections
+        self.setup_load_section(self.left_sidebar)
+        self.setup_dataset_section(self.left_sidebar)
+        self.setup_metric_section(self.left_sidebar)
+
+        # Setup right sidebar
+        self.setup_layout_section(self.right_sidebar)
+        self.setup_plot_options_section(self.right_sidebar)
 
         # Setup plot area
         self.setup_plot_area(plot_area)
@@ -345,20 +235,75 @@ class PlotGUI:
         for metric in self.available_metrics:
             self.add_metric_row(metric)
 
-    def setup_export_section(self, parent):
-        """Setup export controls."""
-        frame = ttk.LabelFrame(parent, text="Export", padding=10)
-        frame.pack(fill=tk.X)
+    def setup_layout_section(self, parent):
+        """Setup layout arrangement controls on right sidebar."""
+        frame = ttk.LabelFrame(parent, text="Subplot Layout", padding=10)
+        frame.pack(fill=tk.X, pady=(0, 10))
 
-        ttk.Button(
+        ttk.Label(frame, text="Arrangement:", font=('TkDefaultFont', 9, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+
+        # Layout options with simple names
+        layouts = [
+            ('Vertical Stack', 'vertical'),
+            ('1 × 2', '1x2'),
+            ('2 × 2', '2x2'),
+            ('1 Top / 2 Bottom', '1t_2b'),
+            ('2 Top / 1 Bottom', '2t_1b'),
+        ]
+
+        for display_name, mode_value in layouts:
+            rb = ttk.Radiobutton(
+                frame,
+                text=display_name,
+                variable=self.layout_mode,
+                value=mode_value,
+                command=self.update_plot
+            )
+            rb.pack(anchor=tk.W, pady=2)
+
+    def setup_plot_options_section(self, parent):
+        """Setup plot style options on right sidebar."""
+        frame = ttk.LabelFrame(parent, text="Plot Options", padding=10)
+        frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(frame, text="Display:", font=('TkDefaultFont', 9, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+
+        # Smoothed line option
+        ttk.Checkbutton(
             frame,
-            text="Export to PNG",
-            command=self.export_plot
-        ).pack(fill=tk.X)
+            text="Smoothed Line",
+            variable=self.show_smoothed,
+            command=self.update_plot
+        ).pack(anchor=tk.W, pady=2)
+
+        # Individual rounds/intervals option
+        ttk.Checkbutton(
+            frame,
+            text="Show Rounds (single dataset)",
+            variable=self.show_intervals,
+            command=self.update_plot
+        ).pack(anchor=tk.W, pady=2)
+
+        # Candlestick with std deviation
+        ttk.Checkbutton(
+            frame,
+            text="Candlestick (± std dev)",
+            variable=self.show_candlestick,
+            command=self.update_plot
+        ).pack(anchor=tk.W, pady=2)
+
+        # Trend line
+        ttk.Checkbutton(
+            frame,
+            text="Linear Trend Line",
+            variable=self.show_trendline,
+            command=self.update_plot
+        ).pack(anchor=tk.W, pady=2)
+
 
     def setup_plot_area(self, parent):
         """Setup the matplotlib plot area."""
-        self.fig = Figure(figsize=(12, 8), dpi=100)
+        self.fig = Figure(figsize=(10, 7), dpi=100)
         self.canvas = FigureCanvasTkAgg(self.fig, master=parent)
 
         # Toolbar
@@ -433,14 +378,77 @@ class PlotGUI:
         )
         cb.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
+    def _load_single_dataset(self, dataset_dir: Path) -> dict:
+        """Load a single dataset directory.
+
+        Args:
+            dataset_dir: Path to dataset directory
+
+        Returns:
+            Dict with 'name', 'dataframe', 'metadata', 'rounds', or 'error' keys
+        """
+        from src.file_operations import load_experiment_metadata, load_individual_rounds_for_plotting
+
+        try:
+            # Load metadata
+            metadata = load_experiment_metadata(dataset_dir)
+            experiment_meta = metadata.get('experiment_metadata', {})
+
+            model_name = experiment_meta.get('model_name', 'unknown')
+            text_name = experiment_meta.get('source_text_name', 'unknown')
+            model_id = experiment_meta.get('model_id', '')
+
+            # Clean up model name
+            if '/' in str(model_name):
+                model_name = str(model_name).split('/')[-1]
+
+            # Build display name
+            parts = [str(model_name), str(text_name)]
+            if model_id and str(model_id) != '':
+                parts.append(str(model_id))
+            name = ' - '.join(parts)
+
+            # Load data
+            individual_rounds, averaged_results, _ = load_individual_rounds_for_plotting(dataset_dir)
+
+            # Create dataframe
+            df = pd.DataFrame(averaged_results)
+            df = df[df['context_length'].notna()].copy()
+
+            if df.empty:
+                return {
+                    'name': name,
+                    'error': 'No valid data in results'
+                }
+
+            return {
+                'name': name,
+                'dataframe': df,
+                'metadata': metadata,
+                'rounds': individual_rounds
+            }
+
+        except Exception as e:
+            return {
+                'name': dataset_dir.name,
+                'error': str(e)
+            }
+
     def load_results_folder(self):
-        """Load all result directories from a parent folder."""
-        folder = filedialog.askdirectory(title="Select results folder")
+        """Load results from either a single dataset directory or a parent folder containing multiple datasets."""
+        folder = filedialog.askdirectory(title="Select results folder or dataset directory")
         if not folder:
             return
 
-        # Use file_operations to load datasets
-        loaded_datasets = load_all_results_from_folder(Path(folder))
+        folder_path = Path(folder)
+
+        # Check if this is a single dataset directory (has metadata.json directly)
+        if (folder_path / "metadata.json").exists():
+            # Load single dataset
+            loaded_datasets = [self._load_single_dataset(folder_path)]
+        else:
+            # Load all subdirectories as datasets
+            loaded_datasets = load_all_results_from_folder(folder_path)
 
         if not loaded_datasets:
             messagebox.showwarning(
@@ -463,6 +471,7 @@ class PlotGUI:
                 name = dataset_info['name']
                 df = dataset_info['dataframe']
                 metadata = dataset_info['metadata']
+                rounds = dataset_info.get('rounds', [])
 
                 # Handle duplicate names
                 original_name = name
@@ -474,6 +483,7 @@ class PlotGUI:
                 # Store dataset
                 self.datasets[name] = df
                 self.dataset_metadata[name] = metadata
+                self.dataset_rounds[name] = rounds
 
                 # Assign color and marker
                 colors, markers = self.get_colors_and_markers()
@@ -511,6 +521,7 @@ class PlotGUI:
             self.dataset_colors.clear()
             self.dataset_markers.clear()
             self.dataset_metadata.clear()
+            self.dataset_rounds.clear()
 
             # Clear UI
             for widget in self.dataset_container.winfo_children():
@@ -550,109 +561,52 @@ class PlotGUI:
         - grid_cols: int - number of columns in the grid
         - positions: list of dicts with row_start, row_end, col_start, col_end (only if use_gridspec=True)
         """
-        import math
-
+        # Simple grid layouts
         if layout_mode == 'vertical':
-            return {
-                'use_gridspec': False,
-                'grid_rows': num_metrics,
-                'grid_cols': 1,
-            }
-        elif layout_mode == 'grid_2x2':
-            return {
-                'use_gridspec': False,
-                'grid_rows': 2,
-                'grid_cols': 2,
-            }
-        elif layout_mode == 'grid_3x1':
-            return {
-                'use_gridspec': False,
-                'grid_rows': 3,
-                'grid_cols': 1,
-            }
-        elif layout_mode == 'grid_1x3':
-            return {
-                'use_gridspec': False,
-                'grid_rows': 1,
-                'grid_cols': 3,
-            }
-        elif layout_mode == 'grid_2x1':
-            return {
-                'use_gridspec': False,
-                'grid_rows': 2,
-                'grid_cols': 1,
-            }
-        elif layout_mode == 'grid_1x2':
-            return {
-                'use_gridspec': False,
-                'grid_rows': 1,
-                'grid_cols': 2,
-            }
-        elif layout_mode == 'top_large':
-            # 1 large plot on top (spans 2 rows), remaining plots in single rows below
-            positions = [{'row_start': 0, 'row_end': 2, 'col_start': 0, 'col_end': 2}]
-            for i in range(1, num_metrics):
-                row = 2 + i - 1
-                positions.append({'row_start': row, 'row_end': row + 1, 'col_start': 0, 'col_end': 2})
-            return {
-                'use_gridspec': True,
-                'grid_rows': 2 + max(0, num_metrics - 1),
-                'grid_cols': 2,
-                'positions': positions,
-            }
-        elif layout_mode == 'bottom_large':
-            # Smaller plots on top, 1 large plot at bottom (spans 2 rows)
-            positions = []
-            for i in range(num_metrics - 1):
-                positions.append({'row_start': i, 'row_end': i + 1, 'col_start': 0, 'col_end': 2})
-            # Last plot is large
-            row = max(0, num_metrics - 1)
-            positions.append({'row_start': row, 'row_end': row + 2, 'col_start': 0, 'col_end': 2})
-            return {
-                'use_gridspec': True,
-                'grid_rows': max(num_metrics - 1, 0) + 2,
-                'grid_cols': 2,
-                'positions': positions,
-            }
-        elif layout_mode == 'left_large':
-            # 1 large plot on left (spans 2 columns), remaining plots stacked on right
-            positions = [{'row_start': 0, 'row_end': num_metrics, 'col_start': 0, 'col_end': 2}]
-            for i in range(1, num_metrics):
-                positions.append({'row_start': i - 1, 'row_end': i, 'col_start': 2, 'col_end': 3})
-            return {
-                'use_gridspec': True,
-                'grid_rows': max(num_metrics, 1),
-                'grid_cols': 3,
-                'positions': positions,
-            }
-        elif layout_mode == 'right_large':
-            # Smaller plots stacked on left, 1 large plot on right (spans all rows)
-            positions = []
-            for i in range(num_metrics - 1):
-                positions.append({'row_start': i, 'row_end': i + 1, 'col_start': 0, 'col_end': 1})
-            # Last plot is large on the right
-            positions.append({'row_start': 0, 'row_end': max(num_metrics - 1, 1), 'col_start': 1, 'col_end': 3})
-            return {
-                'use_gridspec': True,
-                'grid_rows': max(num_metrics - 1, 1),
-                'grid_cols': 3,
-                'positions': positions,
-            }
-        elif layout_mode == 'custom':
-            rows = self.custom_rows.get()
-            cols = self.custom_cols.get()
-            return {
-                'use_gridspec': False,
-                'grid_rows': rows,
-                'grid_cols': cols,
-            }
+            return {'use_gridspec': False, 'grid_rows': num_metrics, 'grid_cols': 1}
+        elif layout_mode == '1x1':
+            return {'use_gridspec': False, 'grid_rows': 1, 'grid_cols': 1}
+        elif layout_mode == '1x2':
+            return {'use_gridspec': False, 'grid_rows': 1, 'grid_cols': 2}
+        elif layout_mode == '1x3':
+            return {'use_gridspec': False, 'grid_rows': 1, 'grid_cols': 3}
+        elif layout_mode == '2x1':
+            return {'use_gridspec': False, 'grid_rows': 2, 'grid_cols': 1}
+        elif layout_mode == '2x2':
+            return {'use_gridspec': False, 'grid_rows': 2, 'grid_cols': 2}
+        elif layout_mode == '3x1':
+            return {'use_gridspec': False, 'grid_rows': 3, 'grid_cols': 1}
+
+        # Custom arrangements using GridSpec
+        elif layout_mode == '1t_1b':
+            # 1 on top (full width), 1 on bottom (full width)
+            positions = [
+                {'row_start': 0, 'row_end': 1, 'col_start': 0, 'col_end': 2},
+                {'row_start': 1, 'row_end': 2, 'col_start': 0, 'col_end': 2}
+            ]
+            return {'use_gridspec': True, 'grid_rows': 2, 'grid_cols': 2, 'positions': positions}
+
+        elif layout_mode == '1t_2b':
+            # 1 on top (full width), 2 on bottom (side by side)
+            positions = [
+                {'row_start': 0, 'row_end': 1, 'col_start': 0, 'col_end': 2},
+                {'row_start': 1, 'row_end': 2, 'col_start': 0, 'col_end': 1},
+                {'row_start': 1, 'row_end': 2, 'col_start': 1, 'col_end': 2}
+            ]
+            return {'use_gridspec': True, 'grid_rows': 2, 'grid_cols': 2, 'positions': positions}
+
+        elif layout_mode == '2t_1b':
+            # 2 on top (side by side), 1 on bottom (full width)
+            positions = [
+                {'row_start': 0, 'row_end': 1, 'col_start': 0, 'col_end': 1},
+                {'row_start': 0, 'row_end': 1, 'col_start': 1, 'col_end': 2},
+                {'row_start': 1, 'row_end': 2, 'col_start': 0, 'col_end': 2}
+            ]
+            return {'use_gridspec': True, 'grid_rows': 2, 'grid_cols': 2, 'positions': positions}
+
         else:
             # Default to vertical
-            return {
-                'use_gridspec': False,
-                'grid_rows': num_metrics,
-                'grid_cols': 1,
-            }
+            return {'use_gridspec': False, 'grid_rows': num_metrics, 'grid_cols': 1}
 
     def update_plot(self):
         """Update the plots based on current selections."""
@@ -679,23 +633,14 @@ class PlotGUI:
                 self.show_message("No metrics selected")
                 return
 
-            # Get plot style settings
-            plot_style = self.plot_style.get()
-            if plot_style == 'lines_markers':
-                linestyle = '-'
-                marker = True
-            elif plot_style == 'lines_only':
-                linestyle = '-'
-                marker = False
-            else:  # markers_only
-                linestyle = 'None'
-                marker = True
+            # Set default plot style
+            linestyle = '-'
+            marker = True
+            line_width = 2.0
+            marker_size = 6.0
 
-            line_width = self.line_width.get()
-            marker_size = self.marker_size.get()
-
-            # Set figure size
-            self.fig.set_size_inches(self.fig_width.get(), self.fig_height.get())
+            # Set figure size (will scale with window)
+            self.fig.set_size_inches(10, 7)
 
             # Store line objects for hover detection
             self.plot_lines = {}  # {line_object: dataset_name}
@@ -761,7 +706,15 @@ class PlotGUI:
                     # Determine marker based on style
                     marker_symbol = self.dataset_markers[dataset_name] if marker else None
 
-                    # Plot and store line object
+                    # Plot individual rounds if enabled (only works with single dataset)
+                    if self.show_intervals.get() and len(selected_datasets) == 1:
+                        self._plot_individual_rounds(ax, dataset_name, metric, self.dataset_colors[dataset_name])
+
+                    # Plot candlestick (error bars with std deviation)
+                    if self.show_candlestick.get():
+                        self._plot_candlestick(ax, df, x_data, y_data, metric, self.dataset_colors[dataset_name])
+
+                    # Plot main line
                     line, = ax.plot(
                         x_data, y_data,
                         marker=marker_symbol,
@@ -774,17 +727,26 @@ class PlotGUI:
                     )
                     self.plot_lines[line] = dataset_name
 
+                    # Plot smoothed line if enabled
+                    if self.show_smoothed.get():
+                        self._plot_smoothed_line(ax, x_data, y_data, self.dataset_colors[dataset_name], dataset_name)
+
+                    # Plot trend line if enabled
+                    if self.show_trendline.get():
+                        self._plot_trendline(ax, x_data, y_data, self.dataset_colors[dataset_name])
+
                 # Add ground truth reference line if available
-                # Check if any selected dataset has ground truth for this metric
+                # Add ground truth for each selected dataset using its matching color
                 for dataset_name in selected_datasets:
                     if dataset_name in self.dataset_metadata:
                         metadata = self.dataset_metadata[dataset_name]
                         ground_truth = metadata.get('ground_truth_analysis', {})
                         if metric in ground_truth:
                             gt_value = ground_truth[metric]
-                            ax.axhline(y=gt_value, color='green', linestyle='--',
-                                     linewidth=2, label='Ground Truth', alpha=0.7)
-                            break  # Only add once per plot
+                            # Use the dataset's color for its ground truth line
+                            ax.axhline(y=gt_value, color=self.dataset_colors[dataset_name],
+                                     linestyle='--', linewidth=2,
+                                     label=f'{dataset_name} GT', alpha=0.7)
 
                 # Format subplot
                 ax.set_xscale('log')
@@ -972,6 +934,32 @@ class PlotGUI:
         except Exception as e:
             messagebox.showerror("Export Error", f"Failed to export:\n{str(e)}")
 
+    def toggle_left_sidebar(self):
+        """Toggle left sidebar visibility."""
+        if self.left_sidebar_visible:
+            # Hide sidebar
+            self.left_sidebar.pack_forget()
+            self.left_toggle_btn.config(text="▶")
+            self.left_sidebar_visible = False
+        else:
+            # Show sidebar
+            self.left_sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(5, 2), pady=5, before=self.left_toggle_btn.master)
+            self.left_toggle_btn.config(text="◀")
+            self.left_sidebar_visible = True
+
+    def toggle_right_sidebar(self):
+        """Toggle right sidebar visibility."""
+        if self.right_sidebar_visible:
+            # Hide sidebar
+            self.right_sidebar.pack_forget()
+            self.right_toggle_btn.config(text="◀")
+            self.right_sidebar_visible = False
+        else:
+            # Show sidebar
+            self.right_sidebar.pack(side=tk.LEFT, fill=tk.Y, padx=(2, 5), pady=5)
+            self.right_toggle_btn.config(text="▶")
+            self.right_sidebar_visible = True
+
     def get_colors_and_markers(self):
         """Get color and marker lists for datasets."""
         colors = [
@@ -980,6 +968,115 @@ class PlotGUI:
         ]
         markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'H']
         return colors, markers
+
+    def _plot_individual_rounds(self, ax, dataset_name, metric, color):
+        """Plot individual rounds as semi-transparent lines."""
+        if dataset_name not in self.dataset_rounds:
+            return
+
+        rounds_data = self.dataset_rounds[dataset_name]
+        if not rounds_data:
+            return
+
+        # Group rounds by context length
+        from collections import defaultdict
+        context_rounds = defaultdict(list)
+
+        for round_data in rounds_data:
+            if metric in round_data and round_data[metric] is not None:
+                ctx = round_data.get('context_length')
+                if ctx is not None:
+                    context_rounds[ctx].append(round_data[metric])
+
+        # Plot each individual round
+        contexts = sorted(context_rounds.keys())
+        num_rounds = max(len(vals) for vals in context_rounds.values()) if context_rounds else 0
+
+        for round_idx in range(num_rounds):
+            round_x = []
+            round_y = []
+            for ctx in contexts:
+                if round_idx < len(context_rounds[ctx]):
+                    round_x.append(ctx)
+                    round_y.append(context_rounds[ctx][round_idx])
+
+            if round_x and round_y:
+                ax.plot(round_x, round_y, color=color, alpha=0.2, linewidth=1, linestyle='-')
+
+    def _plot_candlestick(self, ax, df, x_data, y_data, metric, color):
+        """Plot candlestick with std deviation error bars."""
+        # Need std deviation column
+        std_col = f'{metric}_std'
+        if std_col not in df.columns:
+            # Try computing from rounds if available
+            return
+
+        mask = df[metric].notna() & df['context_length'].notna() & df[std_col].notna()
+        if not mask.any():
+            return
+
+        x = df.loc[mask, 'context_length']
+        y = df.loc[mask, metric]
+        std = df.loc[mask, std_col]
+
+        # Plot error bars
+        ax.errorbar(x, y, yerr=std, color=color, alpha=0.5,
+                   fmt='none', capsize=5, capthick=2, elinewidth=2)
+
+    def _plot_smoothed_line(self, ax, x_data, y_data, color, label):
+        """Plot smoothed line using moving average or spline."""
+        import numpy as np
+        from scipy.interpolate import make_interp_spline
+
+        if len(x_data) < 3:
+            return  # Need at least 3 points for spline
+
+        # Convert to numpy arrays and sort
+        x_arr = np.array(x_data)
+        y_arr = np.array(y_data)
+        sort_idx = np.argsort(x_arr)
+        x_sorted = x_arr[sort_idx]
+        y_sorted = y_arr[sort_idx]
+
+        # Create spline
+        try:
+            # Use log scale for x
+            x_log = np.log10(x_sorted)
+            spline = make_interp_spline(x_log, y_sorted, k=min(3, len(x_sorted)-1))
+
+            # Generate smooth curve
+            x_log_smooth = np.linspace(x_log.min(), x_log.max(), 300)
+            x_smooth = 10 ** x_log_smooth
+            y_smooth = spline(x_log_smooth)
+
+            ax.plot(x_smooth, y_smooth, color=color, alpha=0.4,
+                   linewidth=3, linestyle='-', label=f'{label} (smoothed)')
+        except Exception:
+            # If spline fails, skip smoothing
+            pass
+
+    def _plot_trendline(self, ax, x_data, y_data, color):
+        """Plot linear trend line in log-linear space."""
+        import numpy as np
+
+        if len(x_data) < 2:
+            return
+
+        # Use log of x for trend line
+        x_log = np.log10(np.array(x_data))
+        y_arr = np.array(y_data)
+
+        # Linear regression
+        coeffs = np.polyfit(x_log, y_arr, 1)
+        trend_y = np.polyval(coeffs, x_log)
+
+        # Sort for plotting
+        sort_idx = np.argsort(x_data)
+        x_sorted = np.array(x_data)[sort_idx]
+        trend_y_sorted = trend_y[sort_idx]
+
+        ax.plot(x_sorted, trend_y_sorted, color=color,
+               linestyle=':', linewidth=2, alpha=0.7, label='_nolegend_')
 
 
 def main():

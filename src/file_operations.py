@@ -445,6 +445,7 @@ def load_all_results_from_folder(parent_folder: Path) -> List[Dict[str, Any]]:
             - 'name': Display name for the dataset
             - 'dataframe': pandas DataFrame with averaged results
             - 'metadata': Full metadata dict
+            - 'rounds': List of individual round dicts
             - 'error': Error message if loading failed (optional)
     """
     datasets = []
@@ -493,7 +494,8 @@ def load_all_results_from_folder(parent_folder: Path) -> List[Dict[str, Any]]:
             datasets.append({
                 'name': name,
                 'dataframe': df,
-                'metadata': metadata
+                'metadata': metadata,
+                'rounds': individual_rounds
             })
 
         except Exception as e:

@@ -9,6 +9,8 @@ import argparse
 from pathlib import Path
 from typing import Optional, Dict, Any
 
+from .parameter_schema import PARAMETER_SCHEMA, get_cli_name
+
 
 def get_api_key_from_env() -> Optional[str]:
     """Get API key from environment variables."""
@@ -23,8 +25,8 @@ def get_api_key_from_env() -> Optional[str]:
     )
 
 
-def parse_arguments():
-    """Parse and validate command-line arguments."""
+def create_argument_parser():
+    """Create argument parser from parameter schema (auto-generated)."""
     parser = argparse.ArgumentParser(
         description="Test LLM readability degradation across context lengths",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -35,165 +37,86 @@ Examples:
   python main.py text.txt --rounds 3 --start-context 8192
   python main.py --analyze results/model-text-20241201-123456
   python main.py --reanalyze results/model-text-20241201-123456
-Important:  
+Important:
   Always set top-k, top-p, rep-pen when using KoboldCpp.
   If you set a top-k, top-p, or rep-pen when using an API that does not support it, it will fail.
 """
     )
 
-    # Input file or results directory
-    parser.add_argument(
-        'input_file',
-        nargs='?',
-        help='Path to reference text OR results directory for analysis/reanalysis'
-    )
+    # Dynamically add arguments from schema
+    for param_name, spec in PARAMETER_SCHEMA.items():
+        cli_name = get_cli_name(param_name, spec)
+        param_type = spec.get('type')
+        default = spec.get('default')
+        help_text = spec.get('help')
 
-    # Mode selection
-    parser.add_argument(
-        '--analyze',
-        action='store_true',
-        help='Run analysis on existing results directory'
-    )
+        if param_type == 'positional':
+            # Positional argument
+            parser.add_argument(
+                param_name,
+                nargs=spec.get('nargs', None),
+                help=help_text
+            )
+        elif param_type == 'bool':
+            # Boolean flag
+            parser.add_argument(
+                f'--{cli_name}',
+                action='store_true',
+                default=default,
+                help=help_text
+            )
+        elif param_type == 'int':
+            # Integer argument
+            parser.add_argument(
+                f'--{cli_name}',
+                type=int,
+                default=default,
+                help=help_text
+            )
+        elif param_type == 'float':
+            # Float argument
+            parser.add_argument(
+                f'--{cli_name}',
+                type=float,
+                default=default,
+                help=help_text
+            )
+        else:  # str
+            # String argument
+            parser.add_argument(
+                f'--{cli_name}',
+                default=default,
+                help=help_text
+            )
 
-    parser.add_argument(
-        '--reanalyze',
-        action='store_true',
-        help='Re-run text analysis on stored continuation texts'
-    )
+    return parser
 
-    # API configuration
-    parser.add_argument(
-        '--api-url',
-        default='http://localhost:5001',
-        help='API URL for the LLM service (default: http://localhost:5001)'
-    )
 
-    parser.add_argument(
-        '--api-password',
-        default=None,
-        help='API key/password if required (or set API_KEY/API_PASSWORD env variable)'
-    )
-
-    # Model configuration
-    parser.add_argument(
-        '--model-name',
-        default=None,
-        help='Override model name (auto-detected for KoboldCpp)'
-    )
-
-    parser.add_argument(
-        '--tokenizer-model',
-        default=None,
-        help='HuggingFace tokenizer model name (e.g., "meta-llama/Llama-3.1-8B-Instruct")'
-    )
-
-    parser.add_argument(
-        '--embedding-model',
-        default="nvidia/nv-embed-v1",
-        help='Embedding model name (default: nvidia/nv-embed-v1)'
-    )
-
-    parser.add_argument(
-        '--max-context',
-        type=int,
-        default=None,
-        help='Maximum context length to test (required when using --tokenizer-model)'
-    )
-
-    # Test configuration
-    parser.add_argument(
-        '--word-list',
-        default='easy_words.txt',
-        help='Path to Dale-Chall easy words list (default: easy_words.txt)'
-    )
-
-    parser.add_argument(
-        '--rounds',
-        type=int,
-        default=10,
-        help='Number of test rounds per tier (default: 10, minimum 3 recommended)'
-    )
-
-    parser.add_argument(
-        '--divisions',
-        type=int,
-        default=1,
-        help='Divide tiers (must be power of 2, default: 1)'
-    )
-
-    parser.add_argument(
-        '--start-context',
-        type=int,
-        default=2048,
-        help='Starting context size in tokens (default: 2048)'
-    )
-
-    parser.add_argument(
-        '--max-retries',
-        type=int,
-        default=2,
-        help='Maximum retries for outlier contexts (default: 2)'
-    )
-
-    parser.add_argument(
-        '--ignore-min-tokens',
-        action="store_true",
-        help='Ignore minimum tokens required for successful generation'
-    )
-    parser.add_argument(
-        '--no-think',
-        action="store_true",
-        help='Ask the model not to use thinking tags'
-    )
-    # Generation parameters
-    parser.add_argument(
-        '--max-tokens',
-        type=int,
-        default=1024,
-        help='Maximum tokens to generate (default: 1024)'
-    )
-
-    parser.add_argument(
-        '--temp',
-        type=float,
-        default=0.1,
-        help='Generation temperature (default: 0.1)'
-    )
-
-    parser.add_argument(
-        '--top-k',
-        type=int,
-        default=None,
-        help='Top-k sampling'
-    )
-
-    parser.add_argument(
-        '--top-p',
-        type=float,
-        default=None,
-        help='Top-p sampling'
-    )
-    parser.add_argument(
-        '--rep-pen',
-        type=float,
-        default=None,
-        help='Rep-pen sampling'
-    )
-
-    # Output configuration
-    parser.add_argument(
-        '--model-id',
-        default=None,
-        help='Optional model identifier for result filenames (e.g., "v2", "fine-tuned")'
-    )
-    parser.add_argument(
-        '--seed',
-        type=int,
-        default=None,
-        help='Seed for deterministic generation (where supported)'
-    )
-
+def parse_arguments():
+    """Parse and validate command-line arguments (auto-generated from parameter_schema)."""
+    parser = create_argument_parser()
     args = parser.parse_args()
+
+    # Get API password from environment if not provided via argument
+    if not args.api_password:
+        args.api_password = get_api_key_from_env()
+
+    validate_arguments(args)
+
+    return args
+
+
+def parse_args(argv_list):
+    """Parse arguments from a list (for GUI/programmatic use - auto-generated from parameter_schema).
+
+    Args:
+        argv_list: List of argument strings (like sys.argv[1:])
+
+    Returns:
+        Parsed arguments namespace
+    """
+    parser = create_argument_parser()
+    args = parser.parse_args(argv_list)
 
     # Get API password from environment if not provided via argument
     if not args.api_password:
