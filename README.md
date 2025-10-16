@@ -2,6 +2,8 @@
 
 This tool utilizes a novel method for evaluating an LLM's writing ability.
 
+Note: this is a work in progress!
+
 ## How it Works 
 
 A large creative text is used to fill the context window and the model is instructed to continue the text. 

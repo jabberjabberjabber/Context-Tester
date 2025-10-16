@@ -733,6 +733,10 @@ class BenchmarkGUI:
                 if not spec.get('gui', True) or spec.get('type') == 'positional':
                     continue
 
+                # Don't save API password to disk
+                if param_name == 'api_password':
+                    continue
+
                 var_name = get_var_name(param_name)
                 last_values[var_name] = getattr(self, var_name).get()
 
