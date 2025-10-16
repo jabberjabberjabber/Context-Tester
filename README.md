@@ -27,7 +27,7 @@ Since we are using the model's tokenizer to create these slices, then tests with
 
 *This of course is highly simplified since we are trying to end at natural breaking points and we have to leave enough room for the generation and the instructions, but that is the basic idea.*
 
-This process allows the evaluator to test for individual factors which have so far been 'untestable' by any metric. For instance we can test outputs with different RoPE values, with different quantizations, with 16bit, 8bit, and 4bit KV cache, and directly see what impact this has generation. 
+This process allows the evaluator to test for individual factors such as different RoPE values, different quantizations, 16bit, 8bit, and 4bit KV cache, etc.
 
 Example of setting RoPE to optimize at different lengths:
 
