@@ -1,29 +1,29 @@
-# A Novel LLM Benchmarking Method
+# Context Tester
 
-The currently LLMs are either subjectively evaluated by humans or LLMs or they are graded on answers to various questions. These methods do are computationally expensive, arbitrary, and are subject to 'training for the test'. 
-
-This tool utilizes a novel method for evaluating an LLM's writing ability using a consistent way to generate creative output across different context windows and parameters.
+This tool utilizes a novel method for evaluating an LLM's writing ability.
 
 ## How it Works 
 
-A large creative text is used to fill the context window and the model is instructed to continue the text as the original writer. 
+A large creative text is used to fill the context window and the model is instructed to continue the text. 
 
 A set of standard metrics for evaluating writing is produced from the generated output along with the original text at the point of divergence for the same tokens as the model generated. 
 
 A visualization tool is provided which allows you to compare across generations, models, context windows, test parameters, etc. 
 
-For every set of tests the tool will always give the model the same continuation point in the text. Large windows are filled with tokens starting backwards for the continuation points. 
+For every set of tests the tool will always give the model the same continuation point in the text. Large windows are filled with tokens starting backwards from the continuation points. 
 
-**Example:** for a set of tests composed of 4096, 8192, and 16384 tokens from a text, the process would be:
+**Example:** 
+
+For a set of tests composed of 4096, 8192, and 16384 tokens, the process would be:
 
 - chunk 16384 continuous tokens from somewhere in the text
 - the 4096 test will use tokens 12289 through 16384
 - the 8192 test will use tokens 8192 through 16384
-- the 16384 test will give the whole 16384 chunk to the model
+- the 16384 test will use all 16384 tokens
 
 Since we are using the model's tokenizer to create these slices, then tests with the same maximum context on the same model will have a consistent continuation point and can be directly compared.
 
-This of course is not what is actually happening since we are trying to end at natural breaking points and we have to leave enough room for the generation and the instructions, but that is the basic idea.
+*This of course is highly simplified since we are trying to end at natural breaking points and we have to leave enough room for the generation and the instructions, but that is the basic idea.*
 
 This process allows the evaluator to test for individual factors which have so far been 'untestable' by any metric. For instance we can test outputs with different RoPE values, with different quantizations, with 16bit, 8bit, and 4bit KV cache, and directly see what impact this has generation. 
 
@@ -37,8 +37,6 @@ This repository contains two primary analysis tools:
 ## Installation
 
 ### Prerequisites
-
-This tool was specifically designed to use KoboldCpp's and nVidia's OpenAI compatibile API endpoints. It should work with any OpenAI compatible provider with a chat completions and embedding endpoint, but that hasn't been tested.
 
 - Python 3.13 or higher
 - A large text to use as the basis for continuation (txt, pdf, or html)
@@ -62,7 +60,7 @@ uv sync
 
 ## API Compatibility
 
-The tool works with any OpenAI-compatible API endpoint. Embedding endpoint is required to do coherence tests.
+The tool works with any OpenAI-compatible API endpoint. An embedding endpoint is required to do coherence tests.
 
 ### Tokenizer Support
 
@@ -76,7 +74,7 @@ For gated HuggingFace repositories (like Llama models), set the `HF_TOKEN` envir
 
 ## Input Text
 
-A text can be any type supported by extractous such as txt, pdf, or html. It can be any formatting but better results are obtained if the paragraphs are separated by a blank line and there is no introduction, index, or any other text in it except the story and chapter headings. If it isn't longer than the maximum context length you test then it will be wrapped around itself.
+A text can be txt, pdf, or html. It can be any formatting but better results are obtained if the paragraphs are separated by a blank line and there is no introduction, index, or any other text in it except the story. If it isn't longer than the maximum context length then it will be wrapped around itself.
 
 ## Running Tests
 
