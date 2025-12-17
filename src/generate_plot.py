@@ -25,6 +25,7 @@ Requirements:
 
 import pandas as pd
 import matplotlib.pyplot as plt
+from matplotlib.gridspec import GridSpec
 import numpy as np
 import argparse
 import os
@@ -681,10 +682,185 @@ def parse_arguments():
     parser.add_argument('--enhanced', action='store_true',
                        help='Create enhanced plots with composite scores and statistical analysis')
 
+    parser.add_argument('--convergence', action='store_true',
+                       help='Create convergence heatmap showing which metrics hit ground truth (requires results directory)')
+
+    parser.add_argument('--tolerance', type=float, default=0.10,
+                       help='Convergence tolerance for --convergence mode (default: 0.10 = ±10%%)')
+
     parser.add_argument('--dpi', type=int, default=300,
                        help='Output image resolution (default: 300)')
 
     return parser.parse_args()
+
+
+def create_convergence_heatmap(results_dir_path, output_file='convergence_analysis.png', dpi=300, tolerance=0.10):
+    """Create convergence heatmap showing which metrics hit ground truth at each context size.
+
+    Args:
+        results_dir_path: Path to results directory
+        output_file: Path for output PNG file
+        dpi: Resolution for output image
+        tolerance: Convergence tolerance (default 0.10 = ±10%)
+    """
+    from src.file_operations import load_individual_rounds_for_plotting, load_experiment_metadata
+    from src.statistical_analysis import analyze_ground_truth_convergence
+    import matplotlib
+    matplotlib.use('Agg')
+
+    # Load data
+    _, averaged_results, metadata = load_individual_rounds_for_plotting(results_dir_path)
+    ground_truth = metadata.get('ground_truth_analysis', {})
+
+    if not ground_truth:
+        print("No ground truth data available for convergence analysis")
+        return
+
+    # Perform convergence analysis
+    convergence_data = analyze_ground_truth_convergence(averaged_results, ground_truth, tolerance)
+
+    if not convergence_data:
+        print("Could not perform convergence analysis")
+        return
+
+    # Extract data
+    convergence_matrix = convergence_data['convergence_matrix']
+    convergence_points = convergence_data['convergence_points']
+    metrics_by_convergence_point = convergence_data['metrics_by_convergence_point']
+    context_sizes = convergence_data['context_sizes']
+    available_metrics = convergence_data['available_metrics']
+
+    # Sort metrics by first convergence point
+    sorted_metrics = sorted(available_metrics,
+                           key=lambda m: convergence_points.get(m, float('inf')))
+
+    # Create figure with two subplots
+    fig = plt.figure(figsize=(18, 10))
+    gs = GridSpec(2, 2, figure=fig, height_ratios=[3, 1], width_ratios=[3, 1])
+
+    fig.suptitle(f'Ground Truth Convergence Analysis (±{int(tolerance*100)}% tolerance)',
+                 fontsize=16, fontweight='bold')
+
+    # Main heatmap
+    ax_heatmap = fig.add_subplot(gs[0, 0])
+
+    # Build matrix for heatmap
+    heatmap_data = []
+    for metric in sorted_metrics:
+        row = [1 if convergence_matrix[metric].get(cs, False) else 0
+               for cs in context_sizes]
+        heatmap_data.append(row)
+
+    heatmap_array = np.array(heatmap_data)
+
+    # Create heatmap
+    im = ax_heatmap.imshow(heatmap_array, cmap='RdYlGn', aspect='auto', vmin=0, vmax=1)
+
+    # Set ticks and labels
+    ax_heatmap.set_xticks(range(len(context_sizes)))
+    ax_heatmap.set_xticklabels([f'{int(cs/1024)}K' if cs >= 1024 else str(cs)
+                                for cs in context_sizes], rotation=45, ha='right')
+    ax_heatmap.set_yticks(range(len(sorted_metrics)))
+
+    # Shorten metric names for display
+    display_names = []
+    for m in sorted_metrics:
+        name = m.replace('_', ' ').title()
+        if len(name) > 25:
+            name = name[:22] + '...'
+        display_names.append(name)
+    ax_heatmap.set_yticklabels(display_names, fontsize=9)
+
+    ax_heatmap.set_xlabel('Context Size', fontweight='bold', fontsize=12)
+    ax_heatmap.set_ylabel('Metric', fontweight='bold', fontsize=12)
+    ax_heatmap.set_title('Convergence to Ground Truth', fontweight='bold', fontsize=14)
+
+    # Add colorbar
+    cbar = plt.colorbar(im, ax=ax_heatmap)
+    cbar.set_ticks([0, 1])
+    cbar.set_ticklabels(['Not Converged', 'Converged'])
+
+    # Add grid
+    ax_heatmap.set_xticks(np.arange(len(context_sizes))-.5, minor=True)
+    ax_heatmap.set_yticks(np.arange(len(sorted_metrics))-.5, minor=True)
+    ax_heatmap.grid(which="minor", color="gray", linestyle='-', linewidth=0.5)
+
+    # Convergence point histogram (bottom-left)
+    ax_hist = fig.add_subplot(gs[1, 0])
+
+    conv_points_counts = {}
+    for cs in context_sizes:
+        count = len(metrics_by_convergence_point.get(cs, []))
+        conv_points_counts[cs] = count
+
+    bars = ax_hist.bar(range(len(context_sizes)),
+                       [conv_points_counts.get(cs, 0) for cs in context_sizes],
+                       color='#2563eb', alpha=0.7)
+
+    ax_hist.set_xticks(range(len(context_sizes)))
+    ax_hist.set_xticklabels([f'{int(cs/1024)}K' if cs >= 1024 else str(cs)
+                             for cs in context_sizes], rotation=45, ha='right')
+    ax_hist.set_xlabel('Context Size', fontweight='bold')
+    ax_hist.set_ylabel('# Metrics Converged', fontweight='bold')
+    ax_hist.set_title('First Convergence Point Distribution', fontweight='bold')
+    ax_hist.grid(True, alpha=0.3, axis='y')
+
+    # Summary panel (top-right)
+    ax_summary = fig.add_subplot(gs[0, 1])
+    ax_summary.axis('off')
+
+    summary_text = f"CONVERGENCE SUMMARY\n"
+    summary_text += f"{'='*30}\n\n"
+    summary_text += f"Total Metrics: {len(available_metrics)}\n"
+    summary_text += f"Converged Metrics: {len(convergence_points)}\n"
+    summary_text += f"Never Converged: {len(available_metrics) - len(convergence_points)}\n\n"
+
+    summary_text += f"METRICS BY CONVERGENCE POINT:\n"
+    summary_text += f"{'-'*30}\n"
+
+    for cs in sorted(metrics_by_convergence_point.keys()):
+        metrics_list = metrics_by_convergence_point[cs]
+        cs_label = f"{int(cs/1024)}K" if cs >= 1024 else str(cs)
+        summary_text += f"\n{cs_label} tokens ({len(metrics_list)} metrics):\n"
+        for metric in metrics_list[:5]:  # Show first 5
+            short_name = metric.replace('_', ' ')[:20]
+            summary_text += f"  • {short_name}\n"
+        if len(metrics_list) > 5:
+            summary_text += f"  ... and {len(metrics_list)-5} more\n"
+
+    ax_summary.text(0.05, 0.95, summary_text, transform=ax_summary.transAxes,
+                   fontsize=9, verticalalignment='top', family='monospace',
+                   bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.3))
+
+    # Convergence groups panel (bottom-right)
+    ax_groups = fig.add_subplot(gs[1, 1])
+    ax_groups.axis('off')
+
+    groups_text = f"CONVERGENCE GROUPS\n"
+    groups_text += f"{'='*30}\n\n"
+    groups_text += f"Metrics that converge together:\n\n"
+
+    convergence_groups = convergence_data.get('convergence_groups', [])
+    if convergence_groups:
+        for i, group in enumerate(convergence_groups[:3], 1):  # Show first 3 groups
+            groups_text += f"Group {i}:\n"
+            for metric in group[:4]:  # Show first 4 in group
+                short_name = metric.replace('_', ' ')[:18]
+                groups_text += f"  • {short_name}\n"
+            if len(group) > 4:
+                groups_text += f"  ... +{len(group)-4} more\n"
+            groups_text += "\n"
+    else:
+        groups_text += "No strong convergence\ngroups detected.\n"
+
+    ax_groups.text(0.05, 0.95, groups_text, transform=ax_groups.transAxes,
+                  fontsize=8, verticalalignment='top', family='monospace',
+                  bbox=dict(boxstyle='round', facecolor='lightblue', alpha=0.3))
+
+    plt.tight_layout()
+    plt.savefig(output_file, dpi=dpi, bbox_inches='tight')
+    print(f"Convergence analysis plot saved to: {output_file}")
+    plt.close()
 
 
 def create_enhanced_statistical_plots(results_dir_path, output_file='enhanced_analysis.png', dpi=300):
@@ -931,6 +1107,23 @@ def main():
         return
 
     try:
+        # Check if convergence mode with single directory input
+        if args.convergence:
+            if len(args.inputs) != 1:
+                print("Error: --convergence mode requires exactly one results directory")
+                return
+
+            input_path = Path(args.inputs[0])
+            if not is_results_directory(input_path):
+                print(f"Error: {input_path} is not a results directory")
+                print("Convergence mode requires a results directory (containing metadata.json)")
+                return
+
+            # Create convergence heatmap
+            convergence_output = input_path / f"{input_path.name}_convergence.png"
+            create_convergence_heatmap(input_path, convergence_output, dpi=args.dpi, tolerance=args.tolerance)
+            return
+
         # Check if enhanced mode with single directory input
         if args.enhanced:
             if len(args.inputs) != 1:

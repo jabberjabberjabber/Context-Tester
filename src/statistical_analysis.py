@@ -317,6 +317,136 @@ def calculate_composite_scores_for_dataset(
     return composite_by_context
 
 
+def analyze_ground_truth_convergence(
+    averaged_results: List[Dict],
+    ground_truth: Dict,
+    tolerance: float = 0.10
+) -> Dict:
+    """Analyze when metrics converge to ground truth values across context sizes.
+
+    This function identifies at which context sizes each metric comes within a specified
+    tolerance of the ground truth value, groups metrics that converge together, and
+    calculates correlations between metrics based on their convergence patterns.
+
+    Args:
+        averaged_results: List of dicts with averaged metrics per context size
+        ground_truth: Dict containing ground truth metric values
+        tolerance: Convergence tolerance as decimal (default 0.10 = ±10%)
+
+    Returns:
+        Dictionary containing:
+        - convergence_matrix: Dict[metric][context_size] -> bool (converged or not)
+        - convergence_points: Dict[metric] -> first context size where converged
+        - metrics_by_convergence_point: Dict[context_size] -> list of metrics
+        - correlation_matrix: Correlations between metrics based on convergence patterns
+        - convergence_groups: Metrics grouped by similar convergence behavior
+    """
+    if not averaged_results or not ground_truth:
+        return {}
+
+    # Extract all metrics that exist in both averaged results and ground truth
+    first_result = averaged_results[0]
+    available_metrics = [
+        m for m in first_result.keys()
+        if m != 'context_length' and m in ground_truth and ground_truth[m] is not None
+    ]
+
+    # Build convergence matrix: metric -> context_size -> converged (bool)
+    convergence_matrix = {metric: {} for metric in available_metrics}
+    convergence_points = {}  # metric -> first convergence context size
+    context_sizes = sorted([r['context_length'] for r in averaged_results])
+
+    for metric in available_metrics:
+        gt_value = ground_truth[metric]
+
+        # Skip metrics with zero or invalid ground truth
+        if gt_value == 0 or not isinstance(gt_value, (int, float)):
+            continue
+
+        # Calculate tolerance bounds
+        lower_bound = gt_value * (1 - tolerance)
+        upper_bound = gt_value * (1 + tolerance)
+
+        first_convergence = None
+
+        for result in averaged_results:
+            context_size = result['context_length']
+            metric_value = result.get(metric)
+
+            if metric_value is None:
+                convergence_matrix[metric][context_size] = False
+                continue
+
+            # Check if within tolerance
+            converged = lower_bound <= metric_value <= upper_bound
+            convergence_matrix[metric][context_size] = converged
+
+            # Track first convergence point
+            if converged and first_convergence is None:
+                first_convergence = context_size
+
+        if first_convergence is not None:
+            convergence_points[metric] = first_convergence
+
+    # Group metrics by convergence point
+    metrics_by_convergence_point = {}
+    for metric, conv_point in convergence_points.items():
+        if conv_point not in metrics_by_convergence_point:
+            metrics_by_convergence_point[conv_point] = []
+        metrics_by_convergence_point[conv_point].append(metric)
+
+    # Build correlation matrix based on convergence patterns
+    # Two metrics are correlated if they converge at similar points
+    correlation_matrix = {}
+
+    for metric1 in available_metrics:
+        correlation_matrix[metric1] = {}
+        pattern1 = [1 if convergence_matrix[metric1].get(cs, False) else 0
+                   for cs in context_sizes]
+
+        for metric2 in available_metrics:
+            pattern2 = [1 if convergence_matrix[metric2].get(cs, False) else 0
+                       for cs in context_sizes]
+
+            # Calculate Jaccard similarity (intersection / union)
+            intersection = sum(p1 and p2 for p1, p2 in zip(pattern1, pattern2))
+            union = sum(p1 or p2 for p1, p2 in zip(pattern1, pattern2))
+
+            similarity = intersection / union if union > 0 else 0.0
+            correlation_matrix[metric1][metric2] = similarity
+
+    # Find convergence groups (metrics with high correlation)
+    convergence_groups = []
+    processed_metrics = set()
+
+    for metric in available_metrics:
+        if metric in processed_metrics:
+            continue
+
+        # Find all metrics highly correlated with this one
+        group = [metric]
+        for other_metric in available_metrics:
+            if (other_metric != metric and
+                other_metric not in processed_metrics and
+                correlation_matrix[metric][other_metric] > 0.7):
+                group.append(other_metric)
+
+        if len(group) > 1:
+            convergence_groups.append(group)
+            processed_metrics.update(group)
+
+    return {
+        'convergence_matrix': convergence_matrix,
+        'convergence_points': convergence_points,
+        'metrics_by_convergence_point': metrics_by_convergence_point,
+        'correlation_matrix': correlation_matrix,
+        'convergence_groups': convergence_groups,
+        'context_sizes': context_sizes,
+        'available_metrics': available_metrics,
+        'tolerance': tolerance
+    }
+
+
 def comprehensive_statistical_analysis(
     results_by_context: Dict[int, List[Dict]]
 ) -> Dict:

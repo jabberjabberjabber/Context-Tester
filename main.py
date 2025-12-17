@@ -14,8 +14,12 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
+import threading
 
 from extractous import Extractor
+
+# Global stop flag for GUI integration
+_stop_flag = threading.Event()
 
 # Local modules
 from src.config import parse_arguments, create_generation_params, create_experiment_metadata
@@ -104,7 +108,8 @@ def prepare_working_tokens(text: str, max_context: int, max_tokens: int, client:
     # Convert back to text and prune at natural boundaries
     working_text = client.tokens_to_text_batched(working_tokens)
     pruned_text = client.prune_text(working_text, max_context, len(working_tokens))
-
+    #print(pruned_text)
+    #exit()
     # Final tokenization
     final_tokens = client.tokenize_text_batched(pruned_text)
     return final_tokens
@@ -587,6 +592,11 @@ def run_data_collection(args):
     successful_contexts = 0
 
     for i, context_length in enumerate(context_lengths, 1):
+        # Check if stop was requested
+        if should_stop():
+            print("\n*** Benchmark stopped by user ***")
+            break
+
         print(f"\n[TEST {i}/{len(context_lengths)}] Context Length: {context_length:,} tokens")
         print("-" * 15)
 
@@ -680,12 +690,34 @@ def run_data_collection(args):
         run_analysis(output_dir, args.model_id)
 
 
+def request_stop():
+    """Request the benchmark to stop (called from GUI)."""
+    global _stop_flag
+    _stop_flag.set()
+    print("\nStop requested - benchmark will halt at next checkpoint...")
+
+
+def reset_stop_flag():
+    """Reset the stop flag before starting a new benchmark."""
+    global _stop_flag
+    _stop_flag.clear()
+
+
+def should_stop():
+    """Check if stop has been requested."""
+    global _stop_flag
+    return _stop_flag.is_set()
+
+
 def run_benchmark(args):
     """Run benchmark with given arguments (for GUI use).
 
     Args:
         args: Parsed arguments from parse_args()
     """
+    # Reset stop flag at start of new benchmark
+    reset_stop_flag()
+
     if args.reanalyze:
         results_dir = Path(args.input_file)
         hf_token = os.environ.get('HF_TOKEN') or os.environ.get('HUGGING_FACE_HUB_TOKEN')

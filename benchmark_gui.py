@@ -66,6 +66,26 @@ class BenchmarkGUI:
         # Save settings on close
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
+    def _get_base_url_and_endpoint(self, api_url):
+        """Get base URL and endpoint path based on API type.
+
+        Args:
+            api_url: The API URL string
+
+        Returns:
+            tuple: (base_url, endpoint_path)
+        """
+        # Detect Z.AI endpoint
+        if 'z.ai' in api_url.lower() or '/api/paas/v4' in api_url:
+            endpoint_path = '/api/paas/v4'
+            base_url = api_url.replace('/api/paas/v4/chat/completions', '').replace('/chat/completions', '').rstrip('/')
+        else:
+            # Standard OpenAI-compatible endpoint
+            endpoint_path = '/v1'
+            base_url = api_url.replace('/v1/chat/completions', '').rstrip('/')
+
+        return base_url, endpoint_path
+
     def setup_ui(self):
         """Setup the main UI layout."""
         # Create main container with scrollbar
@@ -140,6 +160,9 @@ class BenchmarkGUI:
         # Environment variable indicator
         self.env_key_label = ttk.Label(pwd_frame, text="", foreground="green", font=('TkDefaultFont', 8))
         self.env_key_label.pack(side=tk.LEFT)
+
+        # Track when user manually changes API password
+        self.api_password.trace_add('write', self._on_api_password_changed)
 
         # Model Name with combobox and fetch button
         model_frame = ttk.Frame(frame)
@@ -341,8 +364,8 @@ class BenchmarkGUI:
         try:
             import requests
 
-            base_url = self.api_url.get().replace('/v1/chat/completions', '').rstrip('/')
-            models_url = f"{base_url}/v1/models"
+            base_url, endpoint_path = self._get_base_url_and_endpoint(self.api_url.get())
+            models_url = f"{base_url}{endpoint_path}/models"
 
             self.log_to_console(f"Querying: {models_url}", 'info')
 
@@ -420,7 +443,7 @@ class BenchmarkGUI:
             import json
 
             # Detect KoboldCpp without creating full client (to avoid tokenizer issues)
-            base_url = self.api_url.get().replace('/v1/chat/completions', '').rstrip('/')
+            base_url, endpoint_path = self._get_base_url_and_endpoint(self.api_url.get())
             version_url = f"{base_url}/api/extra/version"
 
             self.log_to_console(f"Checking: {version_url}", 'info')
@@ -511,7 +534,7 @@ class BenchmarkGUI:
                 import json
 
                 # Quick check for KoboldCpp without creating full client
-                base_url = self.api_url.get().replace('/v1/chat/completions', '').rstrip('/')
+                base_url, endpoint_path = self._get_base_url_and_endpoint(self.api_url.get())
                 version_url = f"{base_url}/api/extra/version"
 
                 is_kobold = False
@@ -679,7 +702,12 @@ class BenchmarkGUI:
         if self.running:
             self.log_to_console("Stopping benchmark (may take a moment)...", 'warning')
             self.running = False
-            # Note: Actual stopping mechanism would need to be implemented in main.py
+            # Request stop via main.py's global flag
+            try:
+                from main import request_stop
+                request_stop()
+            except Exception as e:
+                self.log_to_console(f"Error requesting stop: {e}", 'error')
 
     def benchmark_finished(self):
         """Called when benchmark finishes."""
@@ -764,8 +792,11 @@ class BenchmarkGUI:
                      os.environ.get('NVAPI_KEY')
 
             if api_key:
+                # Temporarily disable the trace to avoid triggering during programmatic set
+                self._setting_env_key = True
                 self.api_password.set(api_key)
                 self._env_api_key = api_key  # Remember it came from env
+                self._setting_env_key = False
                 print(f"Loaded API key from environment variable")
                 # Update indicator after UI is created
                 if hasattr(self, 'env_key_label'):
@@ -780,6 +811,22 @@ class BenchmarkGUI:
         return hasattr(self, '_env_api_key') and \
                self._env_api_key and \
                self.api_password.get() == self._env_api_key
+
+    def _on_api_password_changed(self, *args):
+        """Called when API password field is modified."""
+        # Skip if we're programmatically setting the env key
+        if hasattr(self, '_setting_env_key') and self._setting_env_key:
+            return
+
+        # If the current value differs from the env variable, clear the env flag
+        if hasattr(self, '_env_api_key') and self._env_api_key:
+            current_value = self.api_password.get()
+            if current_value != self._env_api_key:
+                # User manually changed it, clear the env flag
+                self._env_api_key = None
+                # Update the indicator
+                if hasattr(self, 'env_key_label'):
+                    self.env_key_label.config(text="")
 
     def on_closing(self):
         """Handle window close event."""

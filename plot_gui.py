@@ -169,6 +169,7 @@ class PlotGUI:
         # Setup right sidebar
         self.setup_layout_section(self.right_sidebar)
         self.setup_plot_options_section(self.right_sidebar)
+        self.setup_analysis_tools_section(self.right_sidebar)
 
         # Setup plot area
         self.setup_plot_area(plot_area)
@@ -299,6 +300,32 @@ class PlotGUI:
             variable=self.show_trendline,
             command=self.update_plot
         ).pack(anchor=tk.W, pady=2)
+
+    def setup_analysis_tools_section(self, parent):
+        """Setup analysis tools section on right sidebar."""
+        frame = ttk.LabelFrame(parent, text="Analysis Tools", padding=10)
+        frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(frame, text="Generate:", font=('TkDefaultFont', 9, 'bold')).pack(anchor=tk.W, pady=(0, 5))
+
+        # Convergence plot button
+        ttk.Button(
+            frame,
+            text="Convergence Heatmap",
+            command=self.generate_convergence_plot
+        ).pack(fill=tk.X, pady=2)
+
+        # Tolerance setting
+        tolerance_frame = ttk.Frame(frame)
+        tolerance_frame.pack(fill=tk.X, pady=(5, 0))
+
+        ttk.Label(tolerance_frame, text="Tolerance:", font=('TkDefaultFont', 8)).pack(side=tk.LEFT)
+
+        self.tolerance_var = tk.StringVar(value="10")
+        tolerance_entry = ttk.Entry(tolerance_frame, textvariable=self.tolerance_var, width=5)
+        tolerance_entry.pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(tolerance_frame, text="%", font=('TkDefaultFont', 8)).pack(side=tk.LEFT)
 
 
     def setup_plot_area(self, parent):
@@ -907,6 +934,90 @@ class PlotGUI:
             text="Close",
             command=popup.destroy
         ).pack(side=tk.RIGHT)
+
+    def generate_convergence_plot(self):
+        """Generate convergence heatmap for the loaded dataset."""
+        if not self.datasets:
+            messagebox.showwarning("No Data", "Please load a dataset first")
+            return
+
+        if len(self.datasets) > 1:
+            messagebox.showwarning("Multiple Datasets",
+                                 "Convergence analysis requires a single dataset.\n"
+                                 "Please load only one results folder.")
+            return
+
+        # Get the single dataset name
+        dataset_name = list(self.datasets.keys())[0]
+
+        # Check if we have metadata with ground truth
+        if dataset_name not in self.dataset_metadata:
+            messagebox.showerror("No Metadata",
+                               "This dataset doesn't have the required metadata.\n"
+                               "Convergence analysis requires ground truth data.")
+            return
+
+        metadata = self.dataset_metadata[dataset_name]
+        ground_truth = metadata.get('ground_truth_analysis')
+
+        if not ground_truth:
+            messagebox.showerror("No Ground Truth",
+                               "This dataset doesn't have ground truth data.\n"
+                               "Convergence analysis requires ground truth metrics.")
+            return
+
+        # Get tolerance value
+        try:
+            tolerance_pct = float(self.tolerance_var.get())
+            tolerance = tolerance_pct / 100.0
+        except ValueError:
+            messagebox.showerror("Invalid Tolerance",
+                               "Please enter a valid number for tolerance")
+            return
+
+        # Get file path for output
+        filename = filedialog.asksaveasfilename(
+            title="Save Convergence Plot",
+            defaultextension=".png",
+            initialfile=f"{dataset_name}_convergence.png",
+            filetypes=[
+                ("PNG files", "*.png"),
+                ("PDF files", "*.pdf"),
+                ("All files", "*.*")
+            ]
+        )
+
+        if not filename:
+            return
+
+        try:
+            # Import convergence plot function
+            from src.generate_plot import create_convergence_heatmap
+            from pathlib import Path
+
+            # We need the results directory path - try to get it from the loaded data
+            # For now, ask the user to select the results directory
+            results_dir = filedialog.askdirectory(
+                title="Select Results Directory",
+                mustexist=True
+            )
+
+            if not results_dir:
+                return
+
+            results_path = Path(results_dir)
+
+            # Generate the plot
+            create_convergence_heatmap(results_path, filename, dpi=300, tolerance=tolerance)
+
+            messagebox.showinfo("Success",
+                              f"Convergence heatmap saved to:\n{filename}\n\n"
+                              f"Tolerance: ±{tolerance_pct}%")
+
+        except Exception as e:
+            messagebox.showerror("Generation Error",
+                               f"Failed to generate convergence plot:\n{str(e)}\n\n"
+                               f"Traceback: {traceback.format_exc()}")
 
     def export_plot(self):
         """Export current plot to PNG."""
